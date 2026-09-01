@@ -1,0 +1,13 @@
+{
+  "sector": "Semiconductors",
+  "sector_rationale": "Reports cleanly against the concepts this project already tracks (revenue, net income, gross profit, operating income, debt all apply straightforwardly to a hardware/product company) -- unlike, say, banks, where 'gross profit' isn't a meaningful line item and would tank XBRL coverage artificially. CIKs verified against live SEC filing records, not from memory.",
+  "companies": [
+    {"name": "NVIDIA Corporation", "ticker": "NVDA", "cik": "0001045810"},
+    {"name": "Advanced Micro Devices, Inc.", "ticker": "AMD", "cik": "0000002488"},
+    {"name": "Intel Corporation", "ticker": "INTC", "cik": "0000050863"},
+    {"name": "Broadcom Inc.", "ticker": "AVGO", "cik": "0001730168"},
+    {"name": "QUALCOMM Incorporated", "ticker": "QCOM", "cik": "0000804328"},
+    {"name": "Micron Technology, Inc.", "ticker": "MU", "cik": "0000723125"},
+    {"name": "Texas Instruments Incorporated", "ticker": "TXN", "cik": "0000097476"}
+  ]
+}

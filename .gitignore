@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+data/raw/xbrl_cache/
+data/trigger_state.json
+.pytest_cache/
+venv/
+examples/sample_memo_output.md
+".env" 
