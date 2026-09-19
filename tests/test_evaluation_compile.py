@@ -55,7 +55,7 @@ def test_compiles_verified_csvs_into_real_benchmark(tmp_path):
             row["relevant"] = "true" if key not in seen else "false"
             seen.add(key)
     _edit_csv(tmp_path / "retrieval_review.csv", label_retrieval)
-    benchmark = compile_review_queue(tmp_path, ROOT, require_prd_size=False)
+    benchmark = compile_review_queue(tmp_path, tmp_path, require_prd_size=False)
     assert benchmark.scope == "real_labeled"
     assert len(benchmark.numeric_cases) == 1
     assert len(benchmark.numeric_cases[0].expected_facts) == 2  # XBRL only; HTML fallback stays excluded
@@ -73,4 +73,4 @@ def test_prd_size_gate_rejects_tiny_real_benchmark(tmp_path):
             seen.add(row["query_id"])
     _edit_csv(tmp_path / "retrieval_review.csv", label_retrieval)
     with pytest.raises(ValueError, match="at least 5 companies and 30 queries"):
-        compile_review_queue(tmp_path, ROOT)
+        compile_review_queue(tmp_path, tmp_path)
