@@ -18,6 +18,12 @@ from sentence_transformers import CrossEncoder, SentenceTransformer; \
 SentenceTransformer('BAAI/bge-small-en-v1.5'); \
 CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
 
+# The weights baked in above are the ones this image uses. Without this, every
+# run still asks Hugging Face whether they are current, costing ~15s of retries
+# and printing name-resolution errors whenever the container has no outbound
+# network - and the answer would change nothing.
+ENV HF_HUB_OFFLINE=1
+
 COPY src ./src
 COPY config ./config
 COPY benchmarks ./benchmarks

@@ -25,6 +25,7 @@ from src.retrieval.chunking import chunk_blocks
 from src.retrieval.html_ingest import parse_filing_html
 from src.retrieval.hybrid_index import HybridIndex
 from src.retrieval.providers import RetrievalStack, build_retrieval_stack
+from src.service.records import build_run_record, save_run_record
 from src.schema.financial_schema import CompanyFinancials, FinancialConcept, FiscalPeriod
 from src.trigger.edgar_client import FilingEvent, parse_recent_filings
 from src.trigger.state_store import load_seen_accessions, save_seen_accessions
@@ -247,7 +248,8 @@ def run_poll_cycle(watchlist: Watchlist, fetch_submissions: Callable, fetch_comp
                    data_provenance_note: str, since: date | None = None,
                    retrieval: RetrievalStack | None = None,
                    narrative_dir: Path | str | None = None,
-                   peer_comparisons: bool = True) -> PollResult:
+                   peer_comparisons: bool = True,
+                   records_dir: Path | str | None = None) -> PollResult:
     """Acknowledge only after durable output. One failing company/filing cannot stop others.
 
     One process must own a state file. Filesystem replacement protects against
@@ -287,6 +289,8 @@ def run_poll_cycle(watchlist: Watchlist, fetch_submissions: Callable, fetch_comp
                 # failed run leaves neither a memo nor a baseline behind.
                 if narrative_dir is not None and filing.narrative is not None:
                     save_narrative(filing.narrative, narrative_dir)
+                if records_dir is not None:
+                    save_run_record(build_run_record(filing, memo_filename=path.name), records_dir)
                 updated = seen | {event.accession_number}
                 save_seen_accessions(updated, state_path)
                 seen = updated

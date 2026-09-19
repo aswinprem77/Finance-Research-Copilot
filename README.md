@@ -94,9 +94,9 @@ Each memo names the stack that produced its narrative evidence. Every review que
 
 ## Validation and limits
 
-The September 2026 audit passes 227 offline tests and ran a live NVIDIA 10-Q through memo generation. A seven-company real review draft now contains 35 retrieval queries and 29 unique numeric checks. Draft aggregate XBRL coverage is 82.9%; the figures and relevance labels still require manual verification, so this is not yet a certified benchmark.
+The September 2026 audit passes 254 offline tests and ran a live NVIDIA 10-Q through memo generation. A seven-company real review draft now contains 35 retrieval queries and 29 unique numeric checks. Draft aggregate XBRL coverage is 82.9%; the figures and relevance labels still require manual verification, so this is not yet a certified benchmark.
 
-A labeled evaluation benchmark, product API/UI, PostgreSQL/Redis, PDF export, and Azure deployment remain open. Fiscal mapping supports regular quarterly/annual calendars; transition fiscal years need review. HTML fallback supports flat, explicitly dated English/ISO headers and table-local scale labels; complex spans remain gaps.
+A labeled evaluation benchmark, a browser UI, PostgreSQL/Redis, and Azure deployment remain open. Fiscal mapping supports regular quarterly/annual calendars; transition fiscal years need review. HTML fallback supports flat, explicitly dated English/ISO headers and table-local scale labels; complex spans remain gaps.
 
 ## Evaluation baseline
 
@@ -124,6 +124,20 @@ Review the prepared queue in the local interface:
 
 Open `http://127.0.0.1:8765`. The interface shows filing-level progress, opens the original SEC filing, saves each numeric verification and passage label directly to the review CSVs, and enables compilation only after every label is complete and each query has relevant evidence. Stop the server with Ctrl+C.
 
+## Read API and PDF export
+
+Each processed filing now also writes a structured run record beside its memo, under `data/<demo|live>/records/`. That record is what the API serves and what the PDF is drawn from; nothing is recomputed on request.
+
+```powershell
+.\venv\Scripts\python.exe -m src.service --data-dir data/live
+```
+
+Open `http://127.0.0.1:8000/docs`. Endpoints: `/health`, `/watchlist`, `/filings` (filter by `cik`, `form`, `notable_only`), `/filings/{accession}`, `/filings/{accession}/flags`, `/filings/{accession}/peers`, `/filings/{accession}/memo.md`, `/filings/{accession}/memo.pdf`.
+
+The API is read-only and has **no authentication**; it binds to localhost and is meant to sit behind something that does authenticate. `POST /poll` deliberately returns 501: a poll writes completion state, narrative baselines and run records, exactly one process may own those, and an API worker cannot guarantee it is that one. Polling stays with the CLI until there is a durable queue behind it.
+
+PDF export renders from the structured record rather than converting the Markdown, so the scope disclaimer and per-figure provenance markers cannot be lost to a Markdown parser. `reportlab` is pure Python; WeasyPrint would need cairo/pango that the slim image does not carry.
+
 ## Container and CI
 
 ```sh
@@ -146,4 +160,5 @@ The Dockerfile runs as a non-root user and excludes local secrets. The image bui
 - `src/judgment/narrative.py`, `narrative_store.py`: prior-filing language comparison and its durable baselines
 - `src/output/memo.py`: memo tables, citations and review notes
 - `src/evaluation/review_app.py`: local human-labeling interface and guarded benchmark compilation
+- `src/service/`: structured run records, the read API and PDF rendering
 - `tests/`: offline unit and integration tests

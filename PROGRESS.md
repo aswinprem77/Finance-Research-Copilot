@@ -21,12 +21,15 @@ Updated 2026-09-19. This replaces the old session log, whose network restriction
 - Prior-filing narrative change detection: each filing's screened passages are persisted, and the next filing's passages are classified as new, revised, unchanged or unestablished against them. Unchanged repeats are labeled routine and listed separately in the memo; revised passages quote the sentences that are not in the prior filing.
 - Comparison is per sentence, scoring each passage by the fraction of its sentences already present in the prior filing. Chunk boundaries follow a size budget, so one edit upstream shifts every later boundary; whole-passage similarity read unchanged boilerplate as new.
 - Screening covers every prose chunk rather than only retrieved passages, so a disclosure outside the top-k is still seen. Retrieval now only orders passages within a status, deciding which survive the per-topic cap.
+- Structured run records written beside each memo after it is durable, versioned and atomically replaced, serving as the queryable record the API and PDF both read. Unreadable or future-version records are skipped rather than failing a listing.
+- FastAPI read API over those records: health, watchlist, filing list with filters, single filing, flags by severity, peer table, memo Markdown and memo PDF. Nothing is recomputed per request. POST /poll returns 501 by design, because a poll writes state that exactly one process may own and an API worker cannot guarantee it is that one.
+- PDF export via reportlab, rendered from the structured record rather than by converting Markdown, so the scope disclaimer and provenance markers cannot be lost to a Markdown parser.
 - Peer comparison aligned by actual period end date within 45 days (half a quarter, so the nearest candidate is unambiguous), rendered in the memo with each row's own fiscal label, period end and day offset. Peer facts are snapshotted to the subject's filing date; a failed peer fetch is named in the table rather than dropped; companyfacts are fetched once per poll cycle.
 - A filing with no stored predecessor yields `unestablished`, never `new`; the memo says so explicitly. Baselines are written only after the memo is durable, and lookup only reads filings made strictly earlier, so reprocessing cannot see a later filing.
 
 ## Verified in this workspace
 
-- 227 offline tests passing (205 before peer comparison, 156 before narrative change detection, 123 before semantic retrieval, 84 before the audit).
+- 254 offline tests passing (227 before the service phase, 205 before peer comparison, 156 before narrative change detection, 123 before semantic retrieval, 84 before the audit).
 - Offline automatic demo generated a memo; repeat polling skips completed events.
 - Live SEC companyfacts and submissions reachable using the existing configured User-Agent.
 - Live NVIDIA filing 0001045810-26-000075 (10-Q, filed 2026-08-26) generated a memo with 8 metric rows, 10 flags, and 80% XBRL coverage. Latest smoke run took about 1.7 seconds inside process_filing; this excludes submissions polling and is not a latency benchmark.
@@ -51,6 +54,6 @@ Updated 2026-09-19. This replaces the old session log, whose network restriction
 3. Label a sample of the narrative flags on real consecutive filings and calibrate SENTENCE_MATCH_SIMILARITY, UNCHANGED_COVERAGE and REVISED_COVERAGE against it. The mechanism is built and running; its thresholds are guesses and its false-positive/false-negative rates are unmeasured. Start with the NVIDIA pair already processed.
 4. Extend peer comparison beyond revenue, net income and the two margins if an analyst wants more, and consider seasonality: aligned quarters still cover different weeks of trading, and nothing adjusts for that. Peer narrative comparison does not exist.
 5. Add measured faithfulness/numeric-accuracy/coverage reporting. No PRD success metric has been certified by these unit tests.
-6. Add API/UI, durable database/queue, PDF output and cloud deployment as required for the next phase.
+6. Add a browser UI over the read API, and PostgreSQL/Redis if concurrent writers are ever needed; the API is read-only today precisely because the single-writer rule still holds. Azure deployment needs an account and credentials that this workspace does not have. LangSmith instrumentation and a durable Qdrant server also remain open.
 
 See PRD_AUDIT.md for the reviewable change list and detailed limitations. Use the CLI in README.md for the current automatic workflow. The old examples remain stage-level demonstrations.

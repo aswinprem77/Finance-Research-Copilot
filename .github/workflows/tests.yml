@@ -20,3 +20,6 @@ jobs:
       - run: python -m pytest -q tests
       - run: python -m src.pipeline --demo
       - run: python -m src.evaluation
+      # The API and PDF paths are covered by pytest above; this checks the
+      # app actually imports and mounts outside the test client.
+      - run: python -c "from src.service.api import create_app; app = create_app('data/demo'); print(sorted(r.path for r in app.routes))"

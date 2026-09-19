@@ -26,6 +26,8 @@ def main():
     parser.add_argument("--watchlist", type=Path, default=ROOT / "config/watchlist.json")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--state-path", type=Path)
+    parser.add_argument("--records-dir", type=Path,
+                        help="Where structured run records are written. These are what the API serves.")
     parser.add_argument("--narrative-dir", type=Path,
                         help="Where prior-filing narrative baselines are kept. Language flags can "
                              "only establish change against filings stored here.")
@@ -74,7 +76,8 @@ def main():
             result = run_poll_cycle(watchlist, fetch_submissions, fetch_facts, fetch_html,
                 state_path=args.state_path or directory / "completed.json",
                 output_dir=args.output_dir or directory / "memos", data_provenance_note=note, since=since,
-                retrieval=retrieval, narrative_dir=args.narrative_dir or directory / "narrative")
+                retrieval=retrieval, narrative_dir=args.narrative_dir or directory / "narrative",
+                records_dir=args.records_dir or directory / "records")
             print(json.dumps({"completed": [str(p) for p in result.completed], "errors": result.errors}, indent=2))
             if args.interval is None:
                 return 1 if result.errors else 0
