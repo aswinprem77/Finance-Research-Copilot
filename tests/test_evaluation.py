@@ -69,3 +69,24 @@ def test_real_scope_stays_provisional_while_external_metrics_are_unmeasured():
     assert report.certification_status == "provisional"
     assert report.answer_faithfulness.value is None
     assert report.manual_time_saved.value is None
+
+
+def test_report_records_the_retrieval_stack_that_produced_it():
+    report = evaluate_benchmark(load_benchmark(BENCHMARK), ROOT)
+    assert report.retrieval_stack == "lexical|tfidf|lexical_overlap"
+    assert "**Retrieval stack:** lexical|tfidf|lexical_overlap" in report.to_markdown()
+
+
+def test_labels_are_not_scored_against_a_different_retrieval_stack():
+    # Labels name the passages one stack returned. Scoring them under another
+    # stack would report a precision number about nothing.
+    benchmark = load_benchmark(BENCHMARK)
+    benchmark.retrieval_stack = "semantic|BAAI/bge-small-en-v1.5|cross-encoder/ms-marco-MiniLM-L-6-v2"
+    with pytest.raises(ValueError, match="retrieval stack"):
+        evaluate_benchmark(benchmark, ROOT)
+
+
+def test_matching_recorded_stack_is_accepted():
+    benchmark = load_benchmark(BENCHMARK)
+    benchmark.retrieval_stack = "lexical|tfidf|lexical_overlap"
+    assert evaluate_benchmark(benchmark, ROOT).retrieval_precision_at_k.value == 100

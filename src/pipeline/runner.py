@@ -12,17 +12,19 @@ import time
 from typing import Callable
 
 from src.analyst.calculator import compute_qoq, compute_yoy
+from src.analyst.peers import PEER_CONCEPTS, PeerComparison, build_peer_comparison
 from src.ingestion.coverage import compute_coverage
 from src.ingestion.xbrl_parser import TAG_FALLBACKS, parse_company_facts, snapshot_company_facts
-from src.judgment.rubric import Flag, detect_restatements, flag_litigation_language, flag_margin_changes, flag_metric_changes
+from src.judgment.narrative import FilingNarrative, compare_narrative, flag_narrative_changes, screen_filing_narrative
+from src.judgment.narrative_store import load_prior_narrative, save_narrative
+from src.judgment.rubric import detect_restatements, flag_margin_changes, flag_metric_changes
 from src.output.memo import Memo, generate_memo
 from src.pipeline.stage2_gap_fill import fill_coverage_gaps_from_html
-from src.pipeline.watchlist import Watchlist
+from src.pipeline.watchlist import Watchlist, WatchlistCompany
 from src.retrieval.chunking import chunk_blocks
-from src.retrieval.embeddings import TfidfEmbeddingProvider
 from src.retrieval.html_ingest import parse_filing_html
 from src.retrieval.hybrid_index import HybridIndex
-from src.retrieval.rerank import rerank_lexical_overlap
+from src.retrieval.providers import RetrievalStack, build_retrieval_stack
 from src.schema.financial_schema import CompanyFinancials, FinancialConcept, FiscalPeriod
 from src.trigger.edgar_client import FilingEvent, parse_recent_filings
 from src.trigger.state_store import load_seen_accessions, save_seen_accessions
@@ -35,6 +37,12 @@ class FilingResult:
     coverage_pct: float
     missing_concepts: list[FinancialConcept]
     elapsed_seconds: float
+    # Screened narrative for this filing. The caller persists it after the
+    # memo is durable, so a failed run leaves no baseline the next filing
+    # would compare against.
+    narrative: FilingNarrative | None = None
+    prior_narrative_accession: str | None = None
+    peer_comparison: PeerComparison | None = None
 
 
 @dataclass
@@ -43,9 +51,60 @@ class PollResult:
     errors: dict[str, str] = field(default_factory=dict)
 
 
+def _narrative_note(narrative: FilingNarrative | None, prior: FilingNarrative | None) -> str:
+    """State plainly what the language flags on this memo are and are not based on."""
+    if narrative is None:
+        return "No narrative was screened for this filing."
+    if prior is None or not prior.passages:
+        return ("Language flags list screened passages only: no prior filing is on record for this "
+                "company, so none of them has been established as new or changed.")
+    return (f"Language flags compare screened passages against {prior.accession_number} "
+            f"(filed {prior.filing_date}) by word-level similarity with dates normalized. "
+            "Thresholds are uncalibrated and a reworded passage can read as new.")
+
+
+def _build_peers(event: FilingEvent, peers: list[WatchlistCompany], fetch_peer_facts: Callable,
+                 subject: CompanyFinancials, period: tuple) -> PeerComparison | None:
+    """
+    Assemble the peer set for this filing.
+
+    One peer failing must not cost the memo its other peers, or the filing
+    itself, so every fetch is isolated and its reason is carried into the
+    table as a named gap. Peer facts are snapshotted to the subject's filing
+    date for the same reason the subject's are: a peer figure first published
+    after this filing was not available to anyone reading it.
+    """
+    report_date = event.report_date
+    if report_date is None:
+        return None
+    parsed: list[CompanyFinancials] = []
+    unavailable: dict[str, str] = {}
+    for company in peers:
+        if company.cik == event.company_cik:
+            continue
+        try:
+            raw = snapshot_company_facts(fetch_peer_facts(company.cik), event.filing_date)
+            financials, _ = parse_company_facts(raw, company.cik, list(PEER_CONCEPTS))
+            financials.company_name = company.name
+            financials.company_ticker = company.ticker
+            parsed.append(financials)
+        except Exception as exc:
+            unavailable[company.cik] = f"peer data unavailable ({exc})"
+            parsed.append(CompanyFinancials(company_cik=company.cik, company_name=company.name,
+                                            company_ticker=company.ticker))
+    if not parsed:
+        return None
+    return build_peer_comparison(subject, parsed, fiscal_year=period[0], fiscal_period=period[1],
+                                 period_end_date=report_date, unavailable=unavailable)
+
+
 def process_filing(event: FilingEvent, fetch_companyfacts: Callable, fetch_html: Callable,
-                   *, data_provenance_note: str) -> FilingResult:
+                   *, data_provenance_note: str, retrieval: RetrievalStack | None = None,
+                   narrative_dir: Path | str | None = None,
+                   peers: list[WatchlistCompany] | None = None,
+                   fetch_peer_facts: Callable | None = None) -> FilingResult:
     started = time.monotonic()
+    retrieval = retrieval or build_retrieval_stack()
     periodic = event.form.replace("/A", "") in {"10-K", "10-Q"}
 
     def structured():
@@ -71,6 +130,7 @@ def process_filing(event: FilingEvent, fetch_companyfacts: Callable, fetch_html:
 
     targets = list(FinancialConcept)
     period = None
+    peer_comparison = None
     comparisons = []
     flags = []
     gaps = targets
@@ -105,32 +165,49 @@ def process_filing(event: FilingEvent, fetch_companyfacts: Callable, fetch_html:
         for numerator in (FinancialConcept.NET_INCOME, FinancialConcept.GROSS_PROFIT, FinancialConcept.OPERATING_INCOME):
             flags.extend(flag_margin_changes(financials, numerator, current_period=period))
         flags.extend(detect_restatements(raw, targets, accession_number=event.accession_number))
+        if peers and fetch_peer_facts is not None:
+            peer_comparison = _build_peers(event, peers, fetch_peer_facts, financials, period)
 
+    narrative = None
+    prior = None
     if chunks:
-        index = HybridIndex(TfidfEmbeddingProvider())
+        # Screening runs over every prose chunk, deterministically. Retrieval
+        # decides what evidence a memo surfaces; it must not decide what gets
+        # screened, or a disclosure outside the top-k would never be seen.
+        narrative = screen_filing_narrative(
+            chunks, company_cik=event.company_cik, accession_number=event.accession_number,
+            form=event.form, filing_date=event.filing_date, report_date=event.report_date,
+        )
+        if narrative_dir is not None:
+            # Strictly earlier filings only, so reprocessing an old filing
+            # cannot compare it against one that did not exist yet.
+            prior = load_prior_narrative(narrative_dir, event.company_cik,
+                                         before=event.filing_date,
+                                         exclude_accession=event.accession_number)
+        # Path B ranks the screened passages. It only breaks ties within a
+        # status, so it can reorder a capped list but never suppress a flag.
+        relevance_order: list[str] = []
+        index = HybridIndex(retrieval.embeddings)
         try:
             index.build(chunks)
-            evidence = {}
             for query in ("lawsuit litigation regulatory investigation", "debt covenant liquidity default going concern"):
-                for hit in rerank_lexical_overlap(query, index.search(query), top_k=5):
-                    evidence[hit.chunk.chunk_id] = hit.chunk
-            flags.extend(flag_litigation_language(list(evidence.values())))
-            for chunk in evidence.values():
-                terms = [t for t in ("covenant", "liquidity", "going concern", "default", "regulatory investigation") if t in chunk.text.lower()]
-                if chunk.kind == "prose" and terms:
-                    flags.append(Flag("LIQUIDITY_REGULATORY_LANGUAGE", f"Passage contains {terms}", "notable",
-                                      f"{chunk.section} ({chunk.chunk_id})", chunk.text[:400]))
+                for hit in retrieval.rerank(query, index.search(query), top_k=5):
+                    if hit.chunk.chunk_id not in relevance_order:
+                        relevance_order.append(hit.chunk.chunk_id)
         finally:
             index.close()
+        flags.extend(flag_narrative_changes(compare_narrative(narrative, prior), prior,
+                                            relevance_order=relevance_order))
     for flag in flags:
-        if flag.rule_id in {"LITIGATION_LANGUAGE", "LIQUIDITY_REGULATORY_LANGUAGE"}:
+        if flag.rule_id.endswith("_LANGUAGE"):
             accession = event.accession_number
             url = f"https://www.sec.gov/Archives/edgar/data/{int(event.company_cik)}/{accession.replace('-', '')}/{accession}-index.html"
             flag.citation += f"; [{accession}]({url})"
     note = (f"{data_provenance_note} Filing {event.accession_number} ({event.form}), filed {event.filing_date}. "
-            "Retrieval uses TF-IDF and lexical reranking; rubric thresholds are uncalibrated. "
-            "Language flags identify mentions, not verified changes from a prior filing. Images/charts are not processed.")
-    memo = generate_memo(financials, comparisons, flags, note, current_period=period)
+            f"{retrieval.describe()} Rubric thresholds are uncalibrated. "
+            f"{_narrative_note(narrative, prior)} Images/charts are not processed.")
+    memo = generate_memo(financials, comparisons, flags, note, current_period=period,
+                         peer_comparison=peer_comparison)
     if periodic:
         memo.executive_summary.append(f"Current-period XBRL coverage: {coverage_pct:.1f}% ({len(targets)} required concepts).")
         if gaps:
@@ -139,7 +216,10 @@ def process_filing(event: FilingEvent, fetch_companyfacts: Callable, fetch_html:
         memo.executive_summary.append("Event filing: narrative screening only; periodic financial comparisons are unavailable.")
     if not chunks:
         memo.executive_summary.append("No supported prose/table blocks extracted; filing requires manual review.")
-    return FilingResult(event, memo, coverage_pct, gaps, time.monotonic() - started)
+    return FilingResult(event, memo, coverage_pct, gaps, time.monotonic() - started,
+                        narrative=narrative,
+                        prior_narrative_accession=prior.accession_number if prior else None,
+                        peer_comparison=peer_comparison)
 
 
 def write_memo(result: FilingResult, output_dir: Path | str) -> Path:
@@ -164,12 +244,28 @@ def write_memo(result: FilingResult, output_dir: Path | str) -> Path:
 
 def run_poll_cycle(watchlist: Watchlist, fetch_submissions: Callable, fetch_companyfacts: Callable,
                    fetch_html: Callable, *, state_path: Path | str, output_dir: Path | str,
-                   data_provenance_note: str, since: date | None = None) -> PollResult:
+                   data_provenance_note: str, since: date | None = None,
+                   retrieval: RetrievalStack | None = None,
+                   narrative_dir: Path | str | None = None,
+                   peer_comparisons: bool = True) -> PollResult:
     """Acknowledge only after durable output. One failing company/filing cannot stop others.
 
     One process must own a state file. Filesystem replacement protects against
     interrupted writes, not concurrent workers; use a database queue for those.
     """
+    # Built once per cycle, not per filing: the stack holds the loaded encoder,
+    # and reloading model weights for every filing would dominate the run.
+    retrieval = retrieval or build_retrieval_stack()
+    # Companyfacts documents are large and every filing in a cycle compares
+    # against the same peers, so each peer is fetched at most once per cycle.
+    peer_cache: dict[str, dict] = {}
+
+    def peer_facts(cik: str) -> dict:
+        if cik not in peer_cache:
+            peer_cache[cik] = fetch_companyfacts(cik)
+        return peer_cache[cik]
+
+    peers = watchlist.companies if peer_comparisons else None
     seen = load_seen_accessions(state_path)
     result = PollResult()
     for company in watchlist.companies:
@@ -182,8 +278,15 @@ def run_poll_cycle(watchlist: Watchlist, fetch_submissions: Callable, fetch_comp
             if event.accession_number in seen or (since and event.filing_date < since):
                 continue
             try:
-                filing = process_filing(event, fetch_companyfacts, fetch_html, data_provenance_note=data_provenance_note)
+                filing = process_filing(event, fetch_companyfacts, fetch_html,
+                                        data_provenance_note=data_provenance_note, retrieval=retrieval,
+                                        narrative_dir=narrative_dir, peers=peers,
+                                        fetch_peer_facts=peer_facts if peers else None)
                 path = write_memo(filing, output_dir)
+                # Only after the memo is durable, and before acknowledging, so a
+                # failed run leaves neither a memo nor a baseline behind.
+                if narrative_dir is not None and filing.narrative is not None:
+                    save_narrative(filing.narrative, narrative_dir)
                 updated = seen | {event.accession_number}
                 save_seen_accessions(updated, state_path)
                 seen = updated

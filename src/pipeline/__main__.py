@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from src.ingestion.xbrl_client import SecXbrlClient
 from src.pipeline.runner import run_poll_cycle
 from src.pipeline.watchlist import Watchlist, WatchlistCompany, load_watchlist
+from src.retrieval.providers import PROFILES, build_retrieval_stack
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -25,6 +26,12 @@ def main():
     parser.add_argument("--watchlist", type=Path, default=ROOT / "config/watchlist.json")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--state-path", type=Path)
+    parser.add_argument("--narrative-dir", type=Path,
+                        help="Where prior-filing narrative baselines are kept. Language flags can "
+                             "only establish change against filings stored here.")
+    parser.add_argument("--retrieval-profile", choices=PROFILES,
+                        help="Path B stack. Default: semantic, or RETRIEVAL_PROFILE if set. "
+                             "The offline demo defaults to lexical so it needs no model download.")
     args = parser.parse_args()
     if args.interval is not None and args.interval < 60:
         parser.error("--interval must be at least 60 seconds")
@@ -43,6 +50,7 @@ def main():
         note = "SYNTHETIC TEST FIXTURE; not a real company or filing."
         since = None
         directory = ROOT / "data/demo"
+        profile = args.retrieval_profile or os.getenv("RETRIEVAL_PROFILE") or "lexical"
     else:
         load_dotenv(ROOT / ".env")
         try:
@@ -56,11 +64,17 @@ def main():
         note = "SEC companyfacts and primary filing HTML, retrieved for this run."
         since = args.since
         directory = ROOT / "data/live"
+        profile = args.retrieval_profile
+    try:
+        retrieval = build_retrieval_stack(profile)
+    except ValueError as exc:
+        parser.error(str(exc))
     try:
         while True:
             result = run_poll_cycle(watchlist, fetch_submissions, fetch_facts, fetch_html,
                 state_path=args.state_path or directory / "completed.json",
-                output_dir=args.output_dir or directory / "memos", data_provenance_note=note, since=since)
+                output_dir=args.output_dir or directory / "memos", data_provenance_note=note, since=since,
+                retrieval=retrieval, narrative_dir=args.narrative_dir or directory / "narrative")
             print(json.dumps({"completed": [str(p) for p in result.completed], "errors": result.errors}, indent=2))
             if args.interval is None:
                 return 1 if result.errors else 0

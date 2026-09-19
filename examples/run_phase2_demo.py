@@ -3,6 +3,7 @@ Phase 2 demo — runs the full Path B pipeline end-to-end against the
 synthetic filing fixture: parse HTML -> chunk -> build hybrid index ->
 search -> rerank, plus HTML-table fallback fact extraction.
 """
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -10,10 +11,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))  # so `src.*` resolves when run directly
 
 from src.retrieval.chunking import chunk_blocks
-from src.retrieval.embeddings import TfidfEmbeddingProvider
 from src.retrieval.hybrid_index import HybridIndex
 from src.retrieval.html_ingest import TableBlock, parse_filing_html
-from src.retrieval.rerank import rerank_lexical_overlap
+from src.retrieval.providers import build_retrieval_stack
 from src.retrieval.table_fallback import extract_facts_from_table
 from src.schema.financial_schema import FiscalPeriod
 
@@ -33,7 +33,11 @@ def main() -> None:
         print(f"  [{c.kind:5s}] ({c.section[:45]}) {preview}...")
     print()
 
-    index = HybridIndex(TfidfEmbeddingProvider(dim=64))
+    # RETRIEVAL_PROFILE selects the stack; this demo defaults to lexical so it
+    # runs with no model download.
+    retrieval = build_retrieval_stack(os.getenv("RETRIEVAL_PROFILE", "lexical"))
+    print(f"Retrieval stack: {retrieval.fingerprint}\n")
+    index = HybridIndex(retrieval.embeddings)
     index.build(chunks)
 
     query = "lawsuit litigation supplier breach of contract"
@@ -42,7 +46,7 @@ def main() -> None:
     for r in hits:
         print(f"  fused={r.fused_score:.4f}  bm25={r.bm25_score:.2f}  [{r.chunk.kind}] {r.chunk.text[:120]}...")
 
-    reranked = rerank_lexical_overlap(query, hits, top_k=2)
+    reranked = retrieval.rerank(query, hits, top_k=2)
     print("\n-- After rerank --")
     for r in reranked:
         print(f"  [{r.chunk.kind}] {r.chunk.text[:120]}...")

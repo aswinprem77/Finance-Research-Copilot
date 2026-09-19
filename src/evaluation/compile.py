@@ -138,7 +138,11 @@ def compile_review_queue(queue_dir: Path | str, project_root: Path | str,
     return Benchmark.model_validate({
         "benchmark_id": "real-watchlist-v1",
         "description": "Manually verified SEC watchlist benchmark compiled from review spreadsheets.",
-        "scope": "real_labeled", "numeric_cases": numeric_cases,
+        "scope": "real_labeled",
+        # Carried from the queue so the harness can refuse to score these
+        # labels against a retrieval stack that did not produce them.
+        "retrieval_stack": queue.get("retrieval_stack"),
+        "numeric_cases": numeric_cases,
         "retrieval_cases": retrieval_cases, "citation_cases": [], "pipeline_cases": pipeline_cases,
     })
 

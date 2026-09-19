@@ -72,6 +72,10 @@ class Benchmark(BaseModel):
     benchmark_id: str
     description: str
     scope: Literal["synthetic", "real_labeled"]
+    # Fingerprint of the retrieval stack whose top-k results were labeled.
+    # Relevance labels belong to the stack that retrieved the passages, so
+    # the harness refuses to score them against a different one.
+    retrieval_stack: str | None = None
     numeric_cases: list[NumericCase] = Field(default_factory=list)
     retrieval_cases: list[RetrievalCase] = Field(default_factory=list)
     citation_cases: list[CitationCase] = Field(default_factory=list)
@@ -100,6 +104,7 @@ class MetricResult(BaseModel):
 class EvaluationReport(BaseModel):
     benchmark_id: str
     scope: str
+    retrieval_stack: str
     certification_status: Literal["provisional", "eligible_for_certification"]
     numeric_accuracy: MetricResult
     xbrl_coverage: MetricResult
@@ -114,6 +119,7 @@ class EvaluationReport(BaseModel):
         lines = [
             f"# Evaluation Report - {self.benchmark_id}", "",
             f"**Scope:** {self.scope}",
+            f"**Retrieval stack:** {self.retrieval_stack}",
             f"**Certification status:** {self.certification_status}", "",
             "| Metric | Result | PRD target | Status | Qualification |",
             "|---|---:|---:|---|---|",
@@ -137,5 +143,6 @@ class EvaluationReport(BaseModel):
             "", "## Interpretation", "",
             "Synthetic results validate the evaluator and pipeline mechanics only. PRD targets require a real, manually labeled watchlist benchmark.",
             "Citation support is a deterministic evidence-presence check; it is not Ragas/DeepEval answer faithfulness.",
+            "Retrieval precision applies only to the retrieval stack named above; another stack returns different passages and needs its own labels.",
         ])
         return "\n".join(lines) + "\n"

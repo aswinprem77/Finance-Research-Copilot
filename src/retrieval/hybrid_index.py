@@ -20,7 +20,7 @@ from qdrant_client.models import Distance, PointStruct, VectorParams
 from rank_bm25 import BM25Okapi
 
 from src.retrieval.chunking import Chunk
-from src.retrieval.embeddings import EmbeddingProvider
+from src.retrieval.embeddings import EmbeddingProvider, embed_query
 
 COLLECTION_NAME = "filing_chunks"
 RRF_K = 60  # standard default for reciprocal rank fusion
@@ -32,6 +32,8 @@ class RetrievedChunk:
     dense_score: float | None
     bm25_score: float | None
     fused_score: float
+    # Set by the rerank stage, which runs after fusion; None until then.
+    rerank_score: float | None = None
 
 
 class HybridIndex:
@@ -73,7 +75,9 @@ class HybridIndex:
         if not self._built:
             raise RuntimeError("HybridIndex.build(chunks) must be called before search().")
 
-        query_vector = self._embedder.embed([query])[0]
+        # Query-side encoding, not embed(): instruction-tuned models need a
+        # different prefix for queries than for the documents in the index.
+        query_vector = embed_query(self._embedder, query)
         dense_hits = self._client.query_points(
             COLLECTION_NAME, query=query_vector, limit=len(self._chunks)
         ).points

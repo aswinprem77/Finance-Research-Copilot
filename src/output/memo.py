@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from src.analyst.calculator import ComparisonResult
+from src.analyst.peers import PeerComparison, PeerRow
 from src.judgment.rubric import RUBRIC_VERSION, Flag
 from src.schema.financial_schema import CompanyFinancials, FactSource, FinancialConcept, FiscalPeriod
 from src.schema.citations import fact_citation
@@ -59,6 +60,7 @@ class Memo:
     executive_summary: list[str]
     metric_rows: list[MetricRow]
     flags: list[Flag] = field(default_factory=list)
+    peer_comparison: Optional[PeerComparison] = None
 
     def to_markdown(self) -> str:
         lines = [
@@ -96,19 +98,95 @@ class Memo:
                 f"{provenance_marker.get(r.comparison_provenance, r.comparison_provenance)} | {citations} |"
             )
 
-        lines += ["", "## Flagged Items"]
-        if not self.flags:
-            lines.append("_(none — nothing met the current rubric's thresholds)_")
-        for f in self.flags:
-            lines += [
+        if self.peer_comparison is not None:
+            lines += _peer_section(self.peer_comparison)
+
+        # Notable and routine are separated because the rubric now distinguishes
+        # them on evidence, not emphasis: routine means the prior filing says
+        # the same thing. Printing both in one list would hand that distinction
+        # back to the reader to rediscover.
+        notable = [f for f in self.flags if f.severity != "routine"]
+        routine = [f for f in self.flags if f.severity == "routine"]
+
+        def render(flag: Flag) -> list[str]:
+            return [
                 "",
-                f"**[{f.rule_id}]** {f.detail}",
-                f"- Cites: {f.citation}",
-                f"- Rule: {f.rule_description}",
+                f"**[{flag.rule_id}]** {flag.detail}",
+                f"- Cites: {flag.citation}",
+                f"- Rule: {flag.rule_description}",
                 "- For human review: yes — every Judgment agent flag is a screen, not a verdict (PRD Section 5).",
             ]
 
+        lines += ["", "## Flagged Items"]
+        if not notable:
+            lines.append("_(none — nothing met the current rubric's thresholds)_")
+        for f in notable:
+            lines += render(f)
+
+        if routine:
+            lines += [
+                "", "## Routine — screened but unchanged",
+                "",
+                f"{len(routine)} screened passage(s) repeat prior-filing language after normalizing dates. "
+                "Listed for completeness; none of them is a change.",
+            ]
+            for f in routine:
+                lines += render(f)
+
         return "\n".join(lines)
+
+
+def _peer_section(comparison: PeerComparison) -> list[str]:
+    """
+    Render the peer set with its alignment visible. Period end and the day
+    offset are columns, not a footnote, because a peer comparison whose
+    periods do not line up is the failure mode this table exists to prevent.
+    """
+
+    def money(value: float | None) -> str:
+        if value is None:
+            return "N/A"
+        # Sign outside the currency symbol: "$-11,033" reads as a typo.
+        return f"{'-' if value < 0 else ''}${abs(value):,.0f}"
+
+    def pct(value: float | None) -> str:
+        return "N/A" if value is None else f"{value:.1f}%"
+
+    def offset(row: PeerRow) -> str:
+        if row.is_subject:
+            return "subject"
+        if row.end_offset_days is None:
+            return "—"
+        return f"{row.end_offset_days:+d}d"
+
+    lines = [
+        "", "## Peer Comparison", "",
+        comparison.alignment_note(), "",
+        "| Company | Period | Period end | Offset | Revenue | Net income | Net margin | Gross margin |",
+        "|---|---|---|---:|---:|---:|---:|---:|",
+    ]
+    for row in [comparison.subject] + comparison.peers:
+        label = f"{row.company_ticker or row.company_cik}" + (" (subject)" if row.is_subject else "")
+        if row.unavailable_reason is not None:
+            lines.append(f"| {label} | not aligned | — | — | N/A | N/A | N/A | N/A |")
+            continue
+        period = f"{row.fiscal_period.value} FY{row.fiscal_year}" if row.fiscal_period else "—"
+        lines.append(
+            f"| {label} | {period} | {row.period_end_date} | {offset(row)} | "
+            f"{money(row.value(FinancialConcept.REVENUE))} | {money(row.value(FinancialConcept.NET_INCOME))} | "
+            f"{pct(row.net_margin_pct)} | {pct(row.gross_margin_pct)} |"
+        )
+
+    excluded = [r for r in comparison.peers if r.unavailable_reason is not None]
+    if excluded:
+        lines += ["", "Peers not aligned, and why:", ""]
+        lines += [f"- {r.company_ticker or r.company_cik}: {r.unavailable_reason}" for r in excluded]
+    lines += [
+        "",
+        "- For human review: yes — figures are each company's own reported period, not a "
+        "restated common calendar, and no seasonality adjustment is applied.",
+    ]
+    return lines
 
 
 def _provenance_for(
@@ -196,6 +274,7 @@ def generate_memo(
     data_provenance_note: str,
     rubric_version: str = RUBRIC_VERSION,
     current_period: tuple[int, FiscalPeriod] | None = None,
+    peer_comparison: PeerComparison | None = None,
 ) -> Memo:
     """
     `data_provenance_note` is REQUIRED — no default value. Forces every caller to
@@ -231,4 +310,5 @@ def generate_memo(
         executive_summary=executive_summary,
         metric_rows=metric_rows,
         flags=flags,
+        peer_comparison=peer_comparison,
     )

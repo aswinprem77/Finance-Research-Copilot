@@ -9,10 +9,9 @@ from src.ingestion.coverage import compute_coverage, watchlist_coverage_rate
 from src.ingestion.xbrl_parser import parse_company_facts
 from src.pipeline.runner import process_filing
 from src.retrieval.chunking import chunk_blocks
-from src.retrieval.embeddings import TfidfEmbeddingProvider
 from src.retrieval.html_ingest import parse_filing_html
 from src.retrieval.hybrid_index import HybridIndex
-from src.retrieval.rerank import rerank_lexical_overlap
+from src.retrieval.providers import RetrievalStack, build_retrieval_stack, check_fingerprint
 from src.trigger.edgar_client import FilingEvent
 from src.schema.financial_schema import FinancialConcept, FiscalPeriod
 
@@ -38,8 +37,13 @@ def _metric(value, target, unit, passed, numerator, denominator, qualification):
                         numerator=numerator, denominator=denominator, qualification=qualification)
 
 
-def evaluate_benchmark(benchmark: Benchmark, project_root: Path | str) -> EvaluationReport:
+def evaluate_benchmark(benchmark: Benchmark, project_root: Path | str,
+                       retrieval: RetrievalStack | None = None) -> EvaluationReport:
     root = Path(project_root).resolve()
+    retrieval = retrieval or build_retrieval_stack()
+    # Labels were gathered against one stack's top-k. Scoring them against a
+    # different stack measures nothing, so refuse rather than report a number.
+    check_fingerprint(benchmark.retrieval_stack, retrieval, f"Benchmark {benchmark.benchmark_id}")
     failures: list[str] = []
 
     numeric_correct = 0
@@ -76,14 +80,14 @@ def evaluate_benchmark(benchmark: Benchmark, project_root: Path | str) -> Evalua
         html = _resolve(root, case.filing_html_path).read_text(encoding="utf-8")
         chunks = chunk_blocks(parse_filing_html(html))
         available = {chunk.chunk_id for chunk in chunks}
-        index = HybridIndex(TfidfEmbeddingProvider())
+        index = HybridIndex(retrieval.embeddings)
         try:
             index.build(chunks)
             for query in case.queries:
                 unknown = set(query.relevant_chunk_ids) - available
                 if unknown:
                     raise ValueError(f"{query.query_id} labels unknown chunks: {sorted(unknown)}")
-                hits = rerank_lexical_overlap(query.query, index.search(query.query), top_k=query.top_k)
+                hits = retrieval.rerank(query.query, index.search(query.query), top_k=query.top_k)
                 returned = [hit.chunk.chunk_id for hit in hits]
                 relevant = len(set(returned) & set(query.relevant_chunk_ids))
                 relevant_returned += relevant
@@ -116,7 +120,8 @@ def evaluate_benchmark(benchmark: Benchmark, project_root: Path | str) -> Evalua
                             case.filing_date, case.report_date, case.primary_document)
         started = time.monotonic()
         process_filing(event, lambda _: raw, lambda _: html,
-                       data_provenance_note=f"{benchmark.scope.upper()} EVALUATION CASE")
+                       data_provenance_note=f"{benchmark.scope.upper()} EVALUATION CASE",
+                       retrieval=retrieval)
         latencies.append(time.monotonic() - started)
 
     numeric_value = numeric_correct / numeric_total * 100 if numeric_total else None
@@ -131,6 +136,7 @@ def evaluate_benchmark(benchmark: Benchmark, project_root: Path | str) -> Evalua
     return EvaluationReport(
         benchmark_id=benchmark.benchmark_id,
         scope=benchmark.scope,
+        retrieval_stack=retrieval.fingerprint,
         # This harness intentionally cannot certify the two externally measured metrics yet.
         certification_status="provisional",
         numeric_accuracy=_metric(numeric_value, 100, "%", None if numeric_value is None else numeric_value >= 100,

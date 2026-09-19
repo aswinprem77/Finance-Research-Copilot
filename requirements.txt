@@ -10,3 +10,7 @@ rank-bm25>=0.2
 qdrant-client>=1.9
 scikit-learn>=1.4
 numpy>=1.26
+
+# Phase 6 (semantic retrieval): bi-encoder embeddings + cross-encoder reranking.
+# Pulls in torch. Set RETRIEVAL_PROFILE=lexical to run the TF-IDF stack instead.
+sentence-transformers>=3.0

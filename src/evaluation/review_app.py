@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 from src.evaluation.compile import compile_review_queue
 from src.evaluation.harness import evaluate_benchmark
+from src.retrieval.providers import stack_from_fingerprint
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC_HTML = Path(__file__).with_name("review.html")
@@ -124,6 +125,9 @@ class ReviewStore:
             "retrieval_total": len(self._retrieval),
             "queries_without_relevant": queries_without_relevant,
             "ready_to_compile": ready,
+            # Shown in the header so a reviewer always knows which stack
+            # retrieved the passages they are labeling.
+            "retrieval_stack": self._queue.get("retrieval_stack") or "unrecorded",
         }
 
     def state(self) -> dict:
@@ -198,7 +202,10 @@ class ReviewStore:
             benchmark = compile_review_queue(
                 self.queue_dir, self.project_root, require_prd_size=self.require_prd_size,
             )
-            report = evaluate_benchmark(benchmark, self.project_root)
+            # Evaluate under the stack that retrieved these passages, whatever the
+            # environment currently selects - the labels describe that stack's top-k.
+            report = evaluate_benchmark(benchmark, self.project_root,
+                                        retrieval=stack_from_fingerprint(benchmark.retrieval_stack))
             output_dir = self.queue_dir.parent
             benchmark_path = output_dir / "real-watchlist-v1.json"
             report_json_path = output_dir / "real-watchlist-v1-report.json"

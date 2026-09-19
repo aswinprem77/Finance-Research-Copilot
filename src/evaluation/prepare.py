@@ -19,10 +19,9 @@ from src.ingestion.xbrl_client import SecXbrlClient
 from src.pipeline.runner import process_filing, write_memo
 from src.pipeline.watchlist import Watchlist, load_watchlist
 from src.retrieval.chunking import chunk_blocks
-from src.retrieval.embeddings import TfidfEmbeddingProvider
 from src.retrieval.html_ingest import parse_filing_html
 from src.retrieval.hybrid_index import HybridIndex
-from src.retrieval.rerank import rerank_lexical_overlap
+from src.retrieval.providers import PROFILES, RetrievalStack, build_retrieval_stack
 from src.trigger.edgar_client import FilingEvent, parse_recent_filings
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -130,16 +129,16 @@ def export_review_files(queue: dict, output: Path | str) -> dict:
     return {"numeric_checks": len(numeric_rows), "retrieval_results": len(retrieval_rows)}
 
 
-def _retrieval_review(html: str) -> list[dict]:
+def _retrieval_review(html: str, retrieval: RetrievalStack) -> list[dict]:
     chunks = chunk_blocks(parse_filing_html(html))
     if not chunks:
         return []
-    index = HybridIndex(TfidfEmbeddingProvider())
+    index = HybridIndex(retrieval.embeddings)
     try:
         index.build(chunks)
         reviews = []
         for query_id, query in REVIEW_QUERIES:
-            hits = rerank_lexical_overlap(query, index.search(query), top_k=5)
+            hits = retrieval.rerank(query, index.search(query), top_k=5)
             reviews.append({
                 "query_id": query_id,
                 "query": query,
@@ -164,9 +163,11 @@ def prepare_review_queue(
     fetch_html: Callable[[FilingEvent], str],
     output_dir: Path | str,
     filings_per_company: int = 2,
+    retrieval: RetrievalStack | None = None,
 ) -> dict:
     if filings_per_company < 1:
         raise ValueError("filings_per_company must be at least 1")
+    retrieval = retrieval or build_retrieval_stack()
     output = Path(output_dir)
     filings = []
     errors = {}
@@ -192,7 +193,8 @@ def prepare_review_queue(
                 html_path.parent.mkdir(parents=True, exist_ok=True)
                 html_path.write_text(html, encoding="utf-8")
                 result = process_filing(event, lambda _: facts, lambda _: html,
-                                        data_provenance_note="UNLABELED REAL SEC BENCHMARK DRAFT")
+                                        data_provenance_note="UNLABELED REAL SEC BENCHMARK DRAFT",
+                                        retrieval=retrieval)
                 memo_path = write_memo(result, output / "memos")
                 filings.append({
                     "company": {"name": company.name, "ticker": company.ticker, "cik": company.cik},
@@ -213,7 +215,7 @@ def prepare_review_queue(
                         "latency_seconds": result.elapsed_seconds,
                     },
                     "numeric_review": _numeric_review(result.memo.metric_rows),
-                    "retrieval_review": _retrieval_review(html),
+                    "retrieval_review": _retrieval_review(html, retrieval),
                 })
             except Exception as exc:
                 errors[event.accession_number] = str(exc)
@@ -222,11 +224,15 @@ def prepare_review_queue(
         "version": 1,
         "status": "draft_unlabeled",
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        # Which stack retrieved these passages. Relevance labels are only valid
+        # for this stack, so compile and the harness carry it forward.
+        "retrieval_stack": retrieval.fingerprint,
         "instructions": [
             "Open each filing source_url and independently verify numeric values before setting verified=true.",
             "For each retrieval result, set relevant=true or false; do not leave reviewed queries null.",
             "Add reviewer notes for ambiguous periods, units, tables, or narrative relevance.",
             "This draft is not ground truth and must not be used to claim PRD metric compliance.",
+            "Labels apply to the recorded retrieval_stack only; changing the stack requires re-preparing and re-labeling.",
         ],
         "filings": filings,
         "errors": errors,
@@ -242,6 +248,9 @@ def main() -> int:
     parser.add_argument("--filings-per-company", type=int, default=2)
     parser.add_argument("--export-existing", action="store_true", help="Regenerate CSV files from an existing review_queue.json")
     parser.add_argument("--force", action="store_true", help="Replace an existing unlabeled download queue")
+    parser.add_argument("--retrieval-profile", choices=PROFILES,
+                        help="Stack used to retrieve the passages for labeling. Recorded in the "
+                             "queue; labels are only valid for the stack that produced them.")
     args = parser.parse_args()
     queue_path = args.output_dir / "review_queue.json"
     if args.export_existing:
@@ -255,10 +264,14 @@ def main() -> int:
         parser.error(f"Review queue already exists: {queue_path}. Use --export-existing or --force.")
     load_dotenv(ROOT / ".env")
     client = SecXbrlClient(os.getenv("SEC_USER_AGENT", ""), cache_dir=str(args.output_dir / "xbrl-cache"))
+    try:
+        retrieval = build_retrieval_stack(args.retrieval_profile)
+    except ValueError as exc:
+        parser.error(str(exc))
     queue = prepare_review_queue(
         load_watchlist(args.watchlist), client.get_submissions,
         lambda cik: client.get_company_facts(cik, use_cache=True), client.get_filing_html,
-        args.output_dir, args.filings_per_company,
+        args.output_dir, args.filings_per_company, retrieval=retrieval,
     )
     print(json.dumps({
         "review_queue": str(args.output_dir / "review_queue.json"),

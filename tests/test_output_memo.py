@@ -7,9 +7,10 @@ import pytest
 from src.analyst.calculator import compute_yoy
 from src.ingestion.coverage import compute_coverage
 from src.ingestion.xbrl_parser import parse_company_facts
-from src.judgment.rubric import flag_metric_changes
+from src.judgment.rubric import Flag, flag_metric_changes
 from src.output.memo import SCOPE_DISCLAIMER, build_metric_rows, generate_memo
 from src.pipeline.stage2_gap_fill import fill_coverage_gaps_from_html
+from src.schema.financial_schema import CompanyFinancials
 from src.schema.financial_schema import FinancialConcept, FiscalPeriod
 
 XBRL_FIXTURE = Path(__file__).parent / "fixtures" / "sample_companyfacts.json"
@@ -110,3 +111,55 @@ def test_every_flag_gets_a_human_review_line():
     memo = generate_memo(financials, yoy, flags, data_provenance_note="test")
     markdown = memo.to_markdown()
     assert markdown.count("For human review: yes") == len(flags)
+
+
+def test_routine_flags_are_separated_from_notable_ones():
+    memo = generate_memo(
+        CompanyFinancials(company_cik="0000320193", company_name="T"), [],
+        [Flag("NEW_LITIGATION_LANGUAGE", "no counterpart in the prior filing", "notable",
+              "Item 1A (p2)", "A class action was served."),
+         Flag("UNCHANGED_LITIGATION_LANGUAGE", "repeats prior-filing language", "routine",
+              "Item 1A (p1)", "Litigation outcomes are inherently uncertain.")],
+        "SYNTHETIC",
+    )
+    markdown = memo.to_markdown()
+    flagged = markdown.index("## Flagged Items")
+    routine = markdown.index("## Routine — screened but unchanged")
+    assert flagged < markdown.index("NEW_LITIGATION_LANGUAGE") < routine
+    assert routine < markdown.index("UNCHANGED_LITIGATION_LANGUAGE")
+    assert "1 screened passage(s) repeat prior-filing language" in markdown
+
+
+def test_only_routine_flags_still_reports_nothing_notable():
+    memo = generate_memo(
+        CompanyFinancials(company_cik="0000320193", company_name="T"), [],
+        [Flag("UNCHANGED_LITIGATION_LANGUAGE", "repeats prior-filing language", "routine",
+              "Item 1A (p1)", "Litigation outcomes are inherently uncertain.")],
+        "SYNTHETIC",
+    )
+    markdown = memo.to_markdown()
+    assert "nothing met the current rubric's thresholds" in markdown
+    assert "## Routine — screened but unchanged" in markdown
+
+
+def test_peer_table_puts_the_sign_outside_the_currency_symbol():
+    from datetime import date
+
+    from src.analyst.peers import build_peer_comparison
+    from src.schema.financial_schema import FactSource, FinancialFact, FinancialConcept, FiscalPeriod
+
+    def company(cik, ticker, revenue, net_income):
+        return CompanyFinancials(company_cik=cik, company_name=ticker, company_ticker=ticker, facts=[
+            FinancialFact(company_cik=cik, concept=c, value=v, fiscal_year=2026,
+                          fiscal_period=FiscalPeriod.Q2, period_end_date=date(2026, 6, 30),
+                          source=FactSource.XBRL)
+            for c, v in ((FinancialConcept.REVENUE, revenue), (FinancialConcept.NET_INCOME, net_income))
+        ])
+
+    subject = company("0000000001", "SUBJ", 100.0, 10.0)
+    loss_maker = company("0000000002", "LOSS", 200.0, -50.0)
+    comparison = build_peer_comparison(subject, [loss_maker], fiscal_year=2026,
+                                       fiscal_period=FiscalPeriod.Q2, period_end_date=date(2026, 6, 30))
+    markdown = generate_memo(subject, [], [], "SYNTHETIC", peer_comparison=comparison).to_markdown()
+    assert "-$50" in markdown
+    assert "$-50" not in markdown

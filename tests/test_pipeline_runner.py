@@ -1,7 +1,9 @@
 from datetime import date
 import json
+import tempfile
 from pathlib import Path
 
+from src.judgment.narrative_store import load_narrative, save_narrative
 from src.pipeline.runner import process_filing, run_poll_cycle
 from src.pipeline.watchlist import Watchlist, WatchlistCompany
 from src.trigger.edgar_client import FilingEvent
@@ -83,3 +85,178 @@ def test_poll_continues_after_one_company_fetch_fails(tmp_path):
         output_dir=tmp_path / "memos", data_provenance_note="Test")
     assert "1" in result.errors
     assert len(result.completed) == 1
+
+
+# --- prior-filing narrative comparison ---------------------------------------
+
+# An 8-K keeps these tests on the narrative path alone: the synthetic
+# companyfacts fixture has no later periodic period to resolve against.
+def _later_event(accession="0000320193-24-000031"):
+    return FilingEvent("0000320193", "SYNTHETIC TEST CO", accession, "8-K",
+                       date(2024, 10, 20), date(2024, 9, 30), "test.htm")
+
+
+def _no_facts(cik):
+    raise AssertionError("8-K should not fetch periodic facts")
+
+
+def test_first_filing_cannot_claim_new_language(tmp_path):
+    result = process_filing(event(), facts, html, data_provenance_note="SYNTHETIC",
+                            narrative_dir=tmp_path)
+    rule_ids = {f.rule_id for f in result.memo.flags}
+    assert any(r.startswith("UNESTABLISHED_") for r in rule_ids)
+    assert not any(r.startswith("NEW_") for r in rule_ids)
+    assert "no prior filing is on record" in result.memo.to_markdown()
+    assert result.prior_narrative_accession is None
+
+
+def test_repeat_filing_marks_unchanged_language_routine(tmp_path):
+    first = process_filing(event(), facts, html, data_provenance_note="SYNTHETIC",
+                           narrative_dir=tmp_path)
+    save_narrative(first.narrative, tmp_path)
+
+    # Same document filed again as a later period: the language is identical,
+    # so nothing about it is notable any more.
+    second = process_filing(_later_event(), _no_facts, html, data_provenance_note="SYNTHETIC",
+                            narrative_dir=tmp_path)
+    language = [f for f in second.memo.flags if f.rule_id.endswith("_LANGUAGE")]
+    assert language
+    assert all(f.rule_id.startswith("UNCHANGED_") for f in language)
+    assert all(f.severity == "routine" for f in language)
+    assert second.prior_narrative_accession == ACCESSION
+
+
+def test_language_appended_to_an_existing_section_is_revised_and_cites_the_edit(tmp_path):
+    first = process_filing(event(), facts, html, data_provenance_note="SYNTHETIC",
+                           narrative_dir=tmp_path)
+    save_narrative(first.narrative, tmp_path)
+
+    def amended_html(filing):
+        # Appended inside the existing risk-factors prose, so it lands in the
+        # same chunk: a revision of that passage, not a separate one.
+        return html(filing).replace(
+            "</body>",
+            "<p>On September 3, 2024 the Company received a subpoena from state regulators "
+            "concerning its export control compliance program.</p></body>",
+        )
+
+    second = process_filing(_later_event(), _no_facts, amended_html, data_provenance_note="SYNTHETIC",
+                            narrative_dir=tmp_path)
+    revised = [f for f in second.memo.flags if f.rule_id.startswith("REVISED_")]
+    assert revised
+    assert all(f.severity == "notable" for f in revised)
+    assert any("subpoena" in f.detail for f in revised), "the flag must cite the added text"
+
+
+def test_language_under_a_new_heading_is_flagged_new(tmp_path):
+    first = process_filing(event(), facts, html, data_provenance_note="SYNTHETIC",
+                           narrative_dir=tmp_path)
+    save_narrative(first.narrative, tmp_path)
+
+    def amended_html(filing):
+        return html(filing).replace(
+            "</body>",
+            "<h2>Item 1. Legal Proceedings</h2>"
+            "<p>A class action complaint was served by a group of former distributors seeking "
+            "unspecified damages relating to our distribution agreements.</p></body>",
+        )
+
+    second = process_filing(_later_event(), _no_facts, amended_html, data_provenance_note="SYNTHETIC",
+                            narrative_dir=tmp_path)
+    new_flags = [f for f in second.memo.flags if f.rule_id.startswith("NEW_")]
+    assert new_flags
+    assert all(f.severity == "notable" for f in new_flags)
+    assert any("class action" in f.detail for f in new_flags)
+
+
+def test_narrative_is_persisted_only_after_the_memo_is_written(tmp_path):
+    state = tmp_path / "completed.json"
+    output = tmp_path / "memos"
+    narrative_dir = tmp_path / "narrative"
+
+    def failing_html(filing):
+        raise RuntimeError("fetch failed")
+
+    result = run_poll_cycle(Watchlist("t", [WatchlistCompany("SYNTHETIC TEST CO", "TEST", "0000320193")]),
+                            submissions, facts, failing_html, state_path=state, output_dir=output,
+                            data_provenance_note="SYNTHETIC", narrative_dir=narrative_dir)
+    assert result.errors
+    # No memo, so no baseline either - otherwise the next filing would compare
+    # against a filing that never produced output.
+    assert not narrative_dir.exists() or not any(narrative_dir.rglob("*.json"))
+
+
+def test_successful_poll_cycle_stores_the_baseline(tmp_path):
+    state = tmp_path / "completed.json"
+    narrative_dir = tmp_path / "narrative"
+    run_poll_cycle(Watchlist("t", [WatchlistCompany("SYNTHETIC TEST CO", "TEST", "0000320193")]),
+                   submissions, facts, html, state_path=state, output_dir=tmp_path / "memos",
+                   data_provenance_note="SYNTHETIC", narrative_dir=narrative_dir)
+    stored = load_narrative(narrative_dir, "0000320193", ACCESSION)
+    assert stored is not None and stored.passages
+
+
+def test_without_a_narrative_dir_nothing_is_compared_or_written(tmp_path):
+    result = process_filing(event(), facts, html, data_provenance_note="SYNTHETIC")
+    assert result.narrative is not None  # screened, so a caller can persist it
+    assert result.prior_narrative_accession is None
+    assert not any(tmp_path.rglob("*.json"))
+
+
+# --- peer comparison ---------------------------------------------------------
+
+PEERS = [WatchlistCompany("SYNTHETIC TEST CO", "TEST", "0000320193"),
+         WatchlistCompany("PEER CO", "PEER", "0000789019")]
+
+
+def test_peer_comparison_is_absent_unless_peers_are_supplied():
+    result = process_filing(event(), facts, html, data_provenance_note="SYNTHETIC")
+    assert result.peer_comparison is None
+    assert "## Peer Comparison" not in result.memo.to_markdown()
+
+
+def test_peer_comparison_reaches_the_memo():
+    result = process_filing(event(), facts, html, data_provenance_note="SYNTHETIC",
+                            peers=PEERS, fetch_peer_facts=facts)
+    assert result.peer_comparison is not None
+    markdown = result.memo.to_markdown()
+    assert "## Peer Comparison" in markdown
+    assert "aligned on period end date, not fiscal label" in markdown
+    # The subject is never listed as its own peer.
+    assert all(row.company_cik != "0000320193" for row in result.peer_comparison.peers)
+
+
+def test_a_failing_peer_is_named_in_the_table_and_does_not_fail_the_filing():
+    def flaky(cik):
+        if cik == "0000789019":
+            raise RuntimeError("SEC timeout")
+        return facts(cik)
+
+    result = process_filing(event(), facts, html, data_provenance_note="SYNTHETIC",
+                            peers=PEERS, fetch_peer_facts=flaky)
+    broken = next(r for r in result.peer_comparison.peers if r.company_cik == "0000789019")
+    assert "SEC timeout" in broken.unavailable_reason
+    assert "Peers not aligned, and why" in result.memo.to_markdown()
+
+
+def test_peer_facts_are_fetched_once_per_poll_cycle():
+    calls = []
+
+    def counting(cik):
+        calls.append(cik)
+        return facts(cik)
+
+    run_poll_cycle(Watchlist("t", PEERS), submissions, counting, html,
+                   state_path=Path(tempfile.mkdtemp()) / "completed.json",
+                   output_dir=Path(tempfile.mkdtemp()), data_provenance_note="SYNTHETIC")
+    # Companyfacts documents are large; one fetch per company per cycle.
+    assert calls.count("0000789019") <= 1
+
+
+def test_peer_comparisons_can_be_switched_off():
+    result = run_poll_cycle(Watchlist("t", PEERS), submissions, facts, html,
+                            state_path=Path(tempfile.mkdtemp()) / "completed.json",
+                            output_dir=Path(tempfile.mkdtemp()), data_provenance_note="SYNTHETIC",
+                            peer_comparisons=False)
+    assert result.completed
+    assert "## Peer Comparison" not in result.completed[0].read_text(encoding="utf-8")

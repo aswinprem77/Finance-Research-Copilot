@@ -3,12 +3,19 @@ on: [push, pull_request]
 jobs:
   offline-tests:
     runs-on: ubuntu-latest
+    env:
+      # The offline job must not download model weights. conftest.py pins the
+      # test suite to the lexical stack; this covers the CLI steps below too.
+      RETRIEVAL_PROFILE: lexical
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           cache: pip
+      # CPU-only torch: the default wheel ships CUDA libraries a hosted runner
+      # will never use, and they dominate install time.
+      - run: pip install --index-url https://download.pytorch.org/whl/cpu torch
       - run: pip install -r requirements.txt
       - run: python -m pytest -q tests
       - run: python -m src.pipeline --demo
