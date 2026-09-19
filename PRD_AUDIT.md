@@ -21,14 +21,15 @@ The working Git repository is the nested financial-research-copilot directory.
 | Missing figures were invisible in automatic output | Print period coverage and unresolved required concepts; disclose retrieval/imagery/language-screen limits | runner.py |
 | No runtime entry point, container, or CI | Add CLI, Dockerfile, secret-excluding build context, offline-test/demo GitHub workflow | README.md, Dockerfile, .github/workflows/tests.yml |
 | No repeatable quality evaluation | Add a versioned benchmark contract, deterministic metric runner, reports, tests, and CI execution; keep unsupported PRD metrics visibly unmeasured | src/evaluation, benchmarks, tests/test_evaluation.py |
+| Manual review depended on editing large CSVs directly | Add a local-only review interface with SEC links, exact values, atomic label saves, progress, and strict compilation gates; never auto-label ground truth | src/evaluation/review_app.py, src/evaluation/review.html |
 
 ## Validation
 
-118 offline tests pass. Tests cover fiscal/comparative mapping, unusable tags, revision cutoffs, total debt semantics, table scales/dates/missing cells, unsupported layouts, div/hidden prose, restatement false positives, memo provenance, end-to-end output, retries, failed output writes, duplicate suppression, company failure isolation, benchmark metrics, review exports, and strict labeled-benchmark compilation.
+123 offline tests pass. Tests cover fiscal/comparative mapping, unusable tags, revision cutoffs, total debt semantics, table scales/dates/missing cells, unsupported layouts, div/hidden prose, restatement false positives, memo provenance, end-to-end output, retries, failed output writes, duplicate suppression, company failure isolation, benchmark metrics, review exports, local review persistence/HTTP behavior, and strict labeled-benchmark compilation.
 
 Live SEC smoke tests succeeded for NVIDIA companyfacts and for one complete 10-Q. The memo is in data/live/smoke/0001045810-26-000075.md (ignored runtime output). It reported 80% XBRL coverage and explicitly left total_debt unresolved. Financial values and judgment flags have not been manually certified.
 
-Docker Engine 29.4.3 successfully built the image. The non-root container generated a demo memo in a named volume, suppressed the completed event on a second run, and completed a live SEC poll with no new filings from 2026-09-19. Hosted GitHub Actions has not run. No cloud services were deployed.
+Docker Engine 29.4.3 successfully built the image. The non-root container generated a demo memo in a named volume, suppressed the completed event on a second run, and completed a live SEC poll with no new filings from 2026-09-19. Hosted GitHub Actions passed the offline tests and synthetic demo on commit `b49aa76`. No cloud services were deployed.
 
 A real review draft was generated for the seven-company watchlist: seven recent 10-Qs, 35 retrieval queries, 175 result judgments to label, and 29 unique numeric checks. Draft XBRL coverage is 82.9% (29/35 concepts), below the PRD target. Labels are deliberately blank; these results cannot certify accuracy, precision, or faithfulness until reviewed.
 
@@ -40,7 +41,7 @@ A real review draft was generated for the seven-company watchlist: seven recent 
 | Judgment of changes | Language rules detect mentions, including liquidity/regulatory keywords. They do not establish novelty, negation, materiality or a change from the prior filing. Restatement differences are candidate signals without a calibrated materiality cutoff. |
 | Peer comparisons | Calculator utility exists; peer-period alignment and automatic memo tables are not integrated. |
 | Quality targets | No labeled 30-query benchmark, Ragas/DeepEval faithfulness evaluation, manually certified numeric accuracy, watchlist-wide 90% coverage, or time-saved benchmark. |
-| Service/infrastructure | No FastAPI/UI, PostgreSQL/Redis, durable Qdrant server, LangSmith instrumentation, Azure deployment or PDF export. Docker/CI scaffolding was added, not deployed. |
+| Service/infrastructure | The benchmark reviewer is a local standard-library UI, not the PRD product service. No FastAPI product API, PostgreSQL/Redis, durable Qdrant server, LangSmith instrumentation, Azure deployment or PDF export exists. Docker/CI scaffolding was added, not deployed. |
 | Extraction breadth | No extension-taxonomy mapping, YTD subtraction for missing Q2/Q3, robust transition-year calendars, or manual-correction interface. HTML fallback is intentionally limited to unambiguous flat tables. |
 | Operational scope | One worker per state file; submissions recent list only; no distributed queue, full-history pagination, intraday acceptance-time snapshots or attachment discovery. |
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 import re
 
@@ -67,6 +68,12 @@ def compile_review_queue(queue_dir: Path | str, project_root: Path | str,
                 raise ValueError(f"Numeric row is not verified: {key}")
             if not reviewed["verified_value"].strip():
                 raise ValueError(f"Numeric row has no independently verified value: {key}")
+            try:
+                verified_value = float(reviewed["verified_value"])
+            except ValueError as exc:
+                raise ValueError(f"Numeric row has an invalid verified value: {key}") from exc
+            if not math.isfinite(verified_value):
+                raise ValueError(f"Numeric row verified value must be finite: {key}")
             match = PERIOD_RE.fullmatch(candidate["period"])
             if not match:
                 raise ValueError(f"Unsupported period label: {candidate['period']}")
@@ -75,7 +82,7 @@ def compile_review_queue(queue_dir: Path | str, project_root: Path | str,
             if candidate["source"] in {"xbrl", "derived"}:
                 expected_facts.append({
                     "concept": candidate["concept"], "fiscal_year": fiscal_year,
-                    "fiscal_period": fiscal_period, "value": float(reviewed["verified_value"]),
+                    "fiscal_period": fiscal_period, "value": verified_value,
                     "absolute_tolerance": 0,
                 })
         if len(periods) != 1:

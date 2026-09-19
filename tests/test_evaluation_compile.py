@@ -74,3 +74,11 @@ def test_prd_size_gate_rejects_tiny_real_benchmark(tmp_path):
     _edit_csv(tmp_path / "retrieval_review.csv", label_retrieval)
     with pytest.raises(ValueError, match="at least 5 companies and 30 queries"):
         compile_review_queue(tmp_path, tmp_path)
+
+
+def test_compile_rejects_non_finite_verified_values(tmp_path):
+    _prepare(tmp_path)
+    _edit_csv(tmp_path / "numeric_review.csv", lambda rows: [row.update(
+        verified="true", verified_value="NaN") for row in rows])
+    with pytest.raises(ValueError, match="must be finite"):
+        compile_review_queue(tmp_path, tmp_path, require_prd_size=False)

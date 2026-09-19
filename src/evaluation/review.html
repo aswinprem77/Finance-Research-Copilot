@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Financial Research Benchmark Review</title>
+  <style>
+    :root { color-scheme: light; --navy:#132238; --blue:#225b8f; --pale:#edf4fa; --green:#197346; --red:#a33b31; --amber:#a36100; --line:#d7dee7; --text:#1a2734; --muted:#607080; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Inter,Segoe UI,Arial,sans-serif; color:var(--text); background:#f6f8fb; }
+    header { background:var(--navy); color:white; padding:18px 24px; display:flex; gap:24px; align-items:center; justify-content:space-between; }
+    h1 { font-size:20px; margin:0; } h2 { margin:0 0 12px; font-size:19px; } h3 { margin:0; font-size:16px; }
+    .progress-wrap { min-width:360px; font-size:12px; }
+    .progress-row { display:grid; grid-template-columns:95px 1fr 70px; gap:8px; align-items:center; margin:4px 0; }
+    progress { width:100%; accent-color:#53b88b; }
+    main { display:grid; grid-template-columns:250px minmax(0,1fr); min-height:calc(100vh - 100px); }
+    aside { border-right:1px solid var(--line); background:white; padding:18px 12px; }
+    #filing-list { display:grid; gap:7px; }
+    .filing-button { text-align:left; border:1px solid var(--line); background:white; border-radius:8px; padding:10px; cursor:pointer; color:var(--text); }
+    .filing-button.active { border-color:var(--blue); background:var(--pale); }
+    .filing-button strong,.filing-button span { display:block; } .filing-button span { color:var(--muted); font-size:12px; margin-top:3px; }
+    .content { padding:24px; max-width:1250px; width:100%; margin:auto; }
+    .filing-head { display:flex; justify-content:space-between; gap:16px; margin-bottom:20px; align-items:flex-start; }
+    .meta { color:var(--muted); margin-top:5px; } a { color:var(--blue); }
+    section { background:white; border:1px solid var(--line); border-radius:10px; padding:18px; margin-bottom:18px; box-shadow:0 2px 8px rgba(20,35,55,.04); }
+    table { width:100%; border-collapse:collapse; font-size:13px; } th,td { border-bottom:1px solid var(--line); padding:9px; text-align:left; vertical-align:top; } th { color:var(--muted); font-weight:600; }
+    input[type=text], textarea { width:100%; border:1px solid #b9c4d0; border-radius:6px; padding:8px; font:inherit; } textarea { min-height:55px; resize:vertical; }
+    button { border:0; border-radius:6px; padding:8px 11px; cursor:pointer; font-weight:600; }
+    button.primary { background:var(--blue); color:white; } button.good { background:#dff4e8; color:var(--green); } button.bad { background:#f9e4e1; color:var(--red); } button.clear { background:#edf0f4; color:#52606e; }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    .status { font-size:12px; font-weight:700; } .done { color:var(--green); } .pending { color:var(--amber); }
+    .query { border:1px solid var(--line); border-radius:8px; margin:12px 0; overflow:hidden; }
+    .query-head { background:var(--pale); padding:11px 13px; } .query-head small { color:var(--muted); display:block; margin-top:3px; }
+    details { border-top:1px solid var(--line); padding:10px 13px; } summary { cursor:pointer; display:flex; gap:10px; align-items:center; }
+    .badge { font-size:11px; background:#e8edf3; border-radius:12px; padding:3px 7px; }
+    .passage { white-space:pre-wrap; line-height:1.45; margin:10px 0; max-height:270px; overflow:auto; padding:10px; background:#fafbfc; border-radius:6px; }
+    .actions { display:flex; gap:7px; align-items:center; flex-wrap:wrap; } .actions textarea { flex:1; min-width:260px; }
+    #message { position:fixed; bottom:18px; right:18px; max-width:480px; padding:12px 16px; border-radius:8px; color:white; background:var(--navy); display:none; box-shadow:0 4px 20px #0003; }
+    .compile { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+    .compile-result { display:none; width:100%; white-space:pre-wrap; background:#f6f8fb; border-radius:6px; padding:12px; font-size:12px; line-height:1.5; }
+    .warning { color:var(--amber); font-size:13px; }
+    @media(max-width:800px){ header{display:block}.progress-wrap{min-width:0;margin-top:12px}main{display:block}aside{border-right:0;border-bottom:1px solid var(--line)}#filing-list{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}.content{padding:14px}.wide-table{overflow:auto}.filing-head{display:block} }
+  </style>
+</head>
+<body>
+<header>
+  <div><h1>Financial Research Benchmark Review</h1><div style="opacity:.72;font-size:12px;margin-top:4px">Independent labels for real SEC filings</div></div>
+  <div class="progress-wrap">
+    <div class="progress-row"><span>Numeric</span><progress id="num-progress"></progress><span id="num-label"></span></div>
+    <div class="progress-row"><span>Retrieval</span><progress id="ret-progress"></progress><span id="ret-label"></span></div>
+  </div>
+</header>
+<main>
+  <aside><div id="filing-list"></div></aside>
+  <div class="content">
+    <div id="review"></div>
+    <section class="compile">
+      <div><h3>Compile real benchmark</h3><div id="compile-help" class="warning">Complete every review first.</div></div>
+      <button id="compile" class="primary" disabled>Compile and evaluate</button>
+      <div id="compile-result" class="compile-result"></div>
+    </section>
+  </div>
+</main>
+<div id="message"></div>
+<script>
+  let state=null, selected=0;
+  const el=(tag,cls,text)=>{const node=document.createElement(tag);if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node};
+  const show=(text,error=false)=>{const m=document.getElementById('message');m.textContent=text;m.style.background=error?'#a33b31':'#132238';m.style.display='block';setTimeout(()=>m.style.display='none',3500)};
+  async function api(path,options={}){const response=await fetch(path,{headers:{'Content-Type':'application/json'},...options});const data=await response.json();if(!response.ok)throw new Error(data.error||'Request failed');return data}
+  function updateProgress(){const p=state.progress;for(const [kind,done,total] of [['num',p.numeric_completed,p.numeric_total],['ret',p.retrieval_completed,p.retrieval_total]]){const bar=document.getElementById(kind+'-progress');bar.max=total;bar.value=done;document.getElementById(kind+'-label').textContent=`${done}/${total}`};const button=document.getElementById('compile');button.disabled=!p.ready_to_compile;document.getElementById('compile-help').textContent=p.ready_to_compile?'All labels complete. Ready to compile.':`${p.queries_without_relevant.length} queries currently have no relevant passage.`}
+  function renderSidebar(){const list=document.getElementById('filing-list');list.replaceChildren();state.queue.filings.forEach((f,i)=>{const numericDone=f.numeric_review.filter(x=>x.verified===true).length;const results=f.retrieval_review.flatMap(q=>q.results);const retrievalDone=results.filter(x=>x.relevant!==null).length;const b=el('button','filing-button'+(i===selected?' active':''));b.append(el('strong','',f.company.ticker+' | '+f.filing.form));b.append(el('span','',`${f.filing.filing_date} | ${f.system_observation.xbrl_coverage_pct}% XBRL`));b.append(el('span','',`${numericDone}/${f.numeric_review.length} values | ${retrievalDone}/${results.length} passages`));b.onclick=()=>{selected=i;render()};list.append(b)})}
+  function numericTable(filing){const section=el('section');section.append(el('h2','','Numeric verification'));section.append(el('p','meta','Enter the value independently observed in the SEC filing. "Verified" means the review is complete, even when the value differs from the system.'));const wrap=el('div','wide-table');const table=el('table');const head=el('tr');['Metric','Period','System value','Source / citation','Verified value','Notes','Status'].forEach(x=>head.append(el('th','',x)));const thead=el('thead');thead.append(head);table.append(thead);const body=el('tbody');filing.numeric_review.forEach(item=>{const row=el('tr');row.append(el('td','',item.concept));row.append(el('td','',item.period));row.append(el('td','',item.system_value));row.append(el('td','',`${item.source} | ${item.citation}`));const valueCell=el('td');const value=el('input');value.type='text';value.value=item.verified_value??'';value.placeholder='Independent value';valueCell.append(value);row.append(valueCell);const noteCell=el('td');const notes=el('textarea');notes.value=item.reviewer_notes||'';notes.placeholder='Optional notes';noteCell.append(notes);row.append(noteCell);const action=el('td');const status=el('div','status '+(item.verified===true?'done':'pending'),item.verified===true?'Verified':'Pending');const save=el('button','good','Verify');save.onclick=()=>saveNumeric(filing,item,value.value,notes.value,true);const clear=el('button','clear','Clear');clear.onclick=()=>saveNumeric(filing,item,'','',null);action.append(status,el('br'),save,document.createTextNode(' '),clear);row.append(action);body.append(row)});table.append(body);wrap.append(table);section.append(wrap);return section}
+  async function saveNumeric(filing,item,value,notes,verified){try{await api('/api/numeric',{method:'PATCH',body:JSON.stringify({accession_number:filing.filing.accession_number,concept:item.concept,period:item.period,verified_value:value,verified,reviewer_notes:notes})});await load(false);show('Numeric review saved')}catch(e){show(e.message,true)}}
+  function retrievalSection(filing){const section=el('section');section.append(el('h2','','Retrieval relevance'));section.append(el('p','meta','Judge whether each passage directly helps answer the query. Every result needs a label and every query needs at least one relevant passage.'));filing.retrieval_review.forEach(query=>{const box=el('div','query');const head=el('div','query-head');head.append(el('h3','',query.query_id.replaceAll('_',' ')));head.append(el('small','',query.query));box.append(head);query.results.forEach((result,rank)=>{const details=el('details');const summary=el('summary');summary.append(el('span','badge','#'+(rank+1)));summary.append(el('span','',result.section));summary.append(el('span','status '+(result.relevant===true?'done':result.relevant===false?'':'pending'),result.relevant===true?'Relevant':result.relevant===false?'Irrelevant':'Unlabeled'));details.append(summary);details.append(el('div','passage',result.text));const actions=el('div','actions');const notes=el('textarea');notes.value=result.reviewer_notes||'';notes.placeholder='Optional notes about relevance';const yes=el('button','good','Relevant');yes.onclick=()=>saveRetrieval(filing,query,result,true,notes.value);const no=el('button','bad','Irrelevant');no.onclick=()=>saveRetrieval(filing,query,result,false,notes.value);const clear=el('button','clear','Clear');clear.onclick=()=>saveRetrieval(filing,query,result,null,'');actions.append(yes,no,clear,notes);details.append(actions);box.append(details)});section.append(box)});return section}
+  async function saveRetrieval(filing,query,result,relevant,notes){try{await api('/api/retrieval',{method:'PATCH',body:JSON.stringify({accession_number:filing.filing.accession_number,query_id:query.query_id,chunk_id:result.chunk_id,relevant,reviewer_notes:notes})});await load(false);show('Retrieval label saved')}catch(e){show(e.message,true)}}
+  function render(){renderSidebar();updateProgress();const filing=state.queue.filings[selected];const root=document.getElementById('review');root.replaceChildren();const head=el('div','filing-head');const title=el('div');title.append(el('h2','',`${filing.company.name} (${filing.company.ticker})`));title.append(el('div','meta',`${filing.filing.form} | filed ${filing.filing.filing_date} | ${filing.filing.accession_number}`));const link=el('a','','Open SEC filing');link.href=filing.filing.source_url;link.target='_blank';link.rel='noopener noreferrer';head.append(title,link);root.append(head,numericTable(filing),retrievalSection(filing))}
+  async function load(first=true){try{state=await api('/api/state');if(selected>=state.queue.filings.length)selected=0;render();if(first)show('Review queue loaded')}catch(e){show(e.message,true)}}
+  document.getElementById('compile').onclick=async()=>{const button=document.getElementById('compile');button.disabled=true;try{const data=await api('/api/compile',{method:'POST',body:'{}'});const r=data.report;const value=m=>m.value===null?'not measured':`${m.value.toFixed(2)}${m.unit}`;const result=document.getElementById('compile-result');result.textContent=`Certification: ${r.certification_status}\nNumeric accuracy: ${value(r.numeric_accuracy)}\nXBRL coverage: ${value(r.xbrl_coverage)}\nRetrieval precision@k: ${value(r.retrieval_precision_at_k)}\nPipeline latency: ${value(r.pipeline_latency)}\n\nBenchmark: ${data.benchmark}\nReport: ${data.report_markdown}`;result.style.display='block';show('Benchmark compiled and evaluated')}catch(e){show(e.message,true)}finally{button.disabled=!state.progress.ready_to_compile}};
+  load();
+</script>
+</body>
+</html>

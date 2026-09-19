@@ -22,6 +22,14 @@ This downloads the latest periodic filings for the configured watchlist into ign
 
 The same directory contains `numeric_review.csv`, `retrieval_review.csv`, and `filing_summary.csv` for spreadsheet review. Re-export them without downloading data again with `python -m src.evaluation.prepare --export-existing`.
 
+For a guided local review, run:
+
+```bash
+python -m src.evaluation.review_app
+```
+
+Open `http://127.0.0.1:8765`. It writes each completed value and relevance judgment to the existing CSV files. The server listens on the local computer only. It does not generate labels or treat system output as ground truth.
+
 After every numeric row has `verified=true` plus an independently checked `verified_value`, and every retrieval result has `relevant=true` or `false`, compile the benchmark:
 
 ```bash
