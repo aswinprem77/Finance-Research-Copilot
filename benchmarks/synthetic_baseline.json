@@ -1,0 +1,63 @@
+{
+  "benchmark_id": "synthetic-baseline-v1",
+  "description": "Offline evaluator smoke test. It validates mechanics but cannot certify PRD quality targets.",
+  "scope": "synthetic",
+  "numeric_cases": [
+    {
+      "case_id": "synthetic-companyfacts",
+      "companyfacts_path": "tests/fixtures/sample_companyfacts.json",
+      "cik": "0000320193",
+      "accession_number": "0000320193-24-000020",
+      "filed_date": "2024-07-20",
+      "period_end_date": "2024-06-30",
+      "fiscal_year": 2024,
+      "fiscal_period": "Q2",
+      "required_concepts": ["revenue", "net_income", "gross_profit", "total_debt", "operating_income"],
+      "expected_facts": [
+        {"concept": "revenue", "fiscal_year": 2023, "fiscal_period": "Q1", "value": 1000000},
+        {"concept": "revenue", "fiscal_year": 2023, "fiscal_period": "Q2", "value": 1100000},
+        {"concept": "revenue", "fiscal_year": 2024, "fiscal_period": "Q1", "value": 1050000},
+        {"concept": "revenue", "fiscal_year": 2024, "fiscal_period": "Q2", "value": 1250000},
+        {"concept": "net_income", "fiscal_year": 2023, "fiscal_period": "Q1", "value": 100000},
+        {"concept": "net_income", "fiscal_year": 2024, "fiscal_period": "Q2", "value": 150000}
+      ]
+    }
+  ],
+  "retrieval_cases": [
+    {
+      "case_id": "synthetic-filing-retrieval",
+      "filing_html_path": "tests/fixtures/sample_filing_excerpt.html",
+      "queries": [
+        {"query_id": "litigation", "query": "supplier complaint breach contract litigation", "relevant_chunk_ids": ["prose-6"], "top_k": 1},
+        {"query_id": "metrics-table", "query": "selected revenue gross profit net income table", "relevant_chunk_ids": ["table-4"], "top_k": 1},
+        {"query_id": "demand", "query": "automotive demand industrial softness", "relevant_chunk_ids": ["prose-0"], "top_k": 1},
+        {"query_id": "revenue-driver", "query": "revenue increased unit volumes automotive product line", "relevant_chunk_ids": ["prose-5"], "top_k": 1}
+      ]
+    }
+  ],
+  "citation_cases": [
+    {
+      "case_id": "synthetic-evidence",
+      "filing_html_path": "tests/fixtures/sample_filing_excerpt.html",
+      "claims": [
+        {"claim_id": "complaint", "claim": "A former supplier filed a complaint.", "cited_chunk_ids": ["prose-6"], "required_evidence_phrases": ["former supplier filed a complaint"]},
+        {"claim_id": "revenue-growth", "claim": "Revenue increased 13.6% year over year.", "cited_chunk_ids": ["prose-5"], "required_evidence_phrases": ["Revenue increased 13.6% year-over-year"]},
+        {"claim_id": "q2-revenue", "claim": "Revenue was $1.25 million for Q2 2024.", "cited_chunk_ids": ["table-4"], "required_evidence_phrases": ["Total revenue | $1,250"]}
+      ]
+    }
+  ],
+  "pipeline_cases": [
+    {
+      "case_id": "synthetic-end-to-end",
+      "companyfacts_path": "tests/fixtures/sample_companyfacts.json",
+      "filing_html_path": "tests/fixtures/sample_filing_excerpt.html",
+      "company_cik": "0000320193",
+      "company_name": "SYNTHETIC TEST CO",
+      "accession_number": "0000320193-24-000020",
+      "form": "10-Q",
+      "filing_date": "2024-07-20",
+      "report_date": "2024-06-30",
+      "primary_document": "test.htm"
+    }
+  ]
+}

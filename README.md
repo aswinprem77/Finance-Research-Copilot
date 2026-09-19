@@ -46,9 +46,27 @@ Live memos and completion state are under `data/live/`, separate from the demo. 
 
 ## Validation and limits
 
-The September 2026 audit passed 106 offline tests and ran a live NVIDIA 10-Q through memo generation. That single filing resolved 4/5 target metrics through XBRL (80%); total debt stayed missing. This is a smoke test, not a verified accuracy or watchlist benchmark.
+The September 2026 audit passes 118 offline tests and ran a live NVIDIA 10-Q through memo generation. A seven-company real review draft now contains 35 retrieval queries and 29 unique numeric checks. Draft aggregate XBRL coverage is 82.9%; the figures and relevance labels still require manual verification, so this is not yet a certified benchmark.
 
 Semantic embeddings, a cross-encoder, prior-filing language change detection, automated peer tables, a labeled evaluation benchmark, API/UI, PostgreSQL/Redis, PDF export, and Azure deployment remain open. Fiscal mapping supports regular quarterly/annual calendars; transition fiscal years need review. HTML fallback supports flat, explicitly dated English/ISO headers and table-local scale labels; complex spans remain gaps.
+
+## Evaluation baseline
+
+Run the versioned offline benchmark and write JSON/Markdown reports to `data/evaluation/`:
+
+```powershell
+.\venv\Scripts\python.exe -m src.evaluation
+```
+
+The committed synthetic baseline measures numeric extraction, XBRL coverage, retrieval precision, a deterministic citation-support proxy, and pipeline latency. It deliberately leaves answer faithfulness and manual time saved unmeasured. See `benchmarks/README.md` for the requirements of the real, manually labeled benchmark.
+
+Create the real manual-review queue with:
+
+```powershell
+.\venv\Scripts\python.exe -m src.evaluation.prepare --filings-per-company 2
+```
+
+The queue links every candidate to its SEC filing and leaves verification/relevance fields unset. Review those fields before promoting any case to benchmark ground truth.
 
 ## Container and CI
 

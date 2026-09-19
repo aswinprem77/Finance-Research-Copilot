@@ -8,4 +8,5 @@ venv/
 examples/sample_memo_output.md
 data/demo/
 data/live/
+data/evaluation/
 ".env" 
