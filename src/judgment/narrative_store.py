@@ -62,6 +62,23 @@ def load_narrative(root: Path | str, company_cik: str, accession_number: str) ->
     return FilingNarrative.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
 
+def stored_accessions(root: Path | str, company_cik: str) -> set[str]:
+    """
+    Which of this company's filings already have a baseline. Used to decide
+    whether seeding is needed at all, so a re-run does not refetch filings it
+    has already screened.
+    """
+    directory = _company_dir(root, company_cik)
+    if not directory.is_dir():
+        return set()
+    return {path.stem for path in directory.glob("*.json")}
+
+
+def has_narrative(root: Path | str, company_cik: str) -> bool:
+    """True if any baseline exists for this company."""
+    return bool(stored_accessions(root, company_cik))
+
+
 def load_prior_narrative(
     root: Path | str,
     company_cik: str,

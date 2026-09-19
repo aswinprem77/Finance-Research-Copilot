@@ -36,13 +36,14 @@ Live memos and completion state are under `data/live/`, separate from the demo. 
 
 ## What runs
 
-1. Detect unseen 10-K, 10-Q, 8-K and amended filings.
-2. Fetch and parse XBRL and HTML concurrently. Filter facts by the event's filing date.
-3. Calculate current-period YoY/QoQ and margin changes. Attempt HTML fallback only for unresolved figures.
-4. Retrieve narrative evidence with BM25 + local Qdrant over the configured retrieval stack, then rerank. Apply explicit numeric and language rules.
-5. Align peers by period end date and build the peer table.
-6. Screen every prose passage for litigation and liquidity/regulatory language, then classify each against the company's previous filing as new, revised, unchanged or unestablished.
-7. Save a Markdown memo with current/prior sources, filing links, unresolved metrics, and human-review labels; then persist the narrative baseline and completion.
+1. Seed narrative baselines once with `--backfill`, so the first real filing is compared rather than reported as unestablished.
+2. Detect unseen 10-K, 10-Q, 8-K and amended filings.
+3. Fetch and parse XBRL and HTML concurrently. Filter facts by the event's filing date.
+4. Calculate current-period YoY/QoQ and margin changes. Attempt HTML fallback only for unresolved figures.
+5. Retrieve narrative evidence with BM25 + local Qdrant over the configured retrieval stack, then rerank. Apply explicit numeric and language rules.
+6. Align peers by period end date and build the peer table.
+7. Screen every prose passage for litigation and liquidity/regulatory language, then classify each against the company's previous filing as new, revised, unchanged or unestablished.
+8. Save a Markdown memo with current/prior sources, filing links, unresolved metrics, and human-review labels; then persist the narrative baseline and completion.
 
 8-K memos screen narrative only. They do not relabel periodic companyfacts as 8-K financial results.
 
@@ -55,6 +56,18 @@ On NVIDIA's 10-Q for the quarter ended 2026-07-26, four of six peers align: TXN 
 Peers that drop out are listed with the reason and their nearest available period, because the two ways it happens mean different things. Broadcom's quarter ended 2026-08-02, only 7 days away, but was filed 2026-09-10 — after NVIDIA's filing, so nobody reading it could have seen those figures, and the as-of snapshot excludes them. Micron simply has no quarter near that date.
 
 Quarters never align against annual periods. Peer facts are snapshotted to the subject's filing date, a failed peer fetch is named in the table rather than dropped, and companyfacts are fetched once per poll cycle. Disable with `peer_comparisons=False`. No seasonality adjustment is applied, and figures are each company's own reported period.
+
+## Seeding baselines before the first poll
+
+Narrative change detection compares a filing against the company's previous one, and a baseline only exists for filings the poller processed while running. On a fresh install nothing has been processed, so every screened passage comes back `unestablished` until each company has filed twice under a running system — about a quarter for a 10-Q watchlist. Seed them first:
+
+```powershell
+.\venv\Scripts\python.exe -m src.pipeline --backfill
+```
+
+That fetches each company's most recent past 10-K/10-Q, screens it, and stores the baseline. It writes no memos and marks nothing completed, so a filing that arrives during setup still gets its own memo. Re-running is a no-op for companies already seeded; `--force` re-seeds, `--backfill-depth` seeds more history (only the nearest prior filing is ever used by a comparison, so 1 is enough).
+
+Seeding costs one HTML fetch per company — no companyfacts download, because screening reads prose only. Live polling prints a note naming any company still without a baseline.
 
 ## Narrative change detection
 
@@ -94,7 +107,7 @@ Each memo names the stack that produced its narrative evidence. Every review que
 
 ## Validation and limits
 
-The September 2026 audit passes 254 offline tests and ran a live NVIDIA 10-Q through memo generation. A seven-company real review draft now contains 35 retrieval queries and 29 unique numeric checks. Draft aggregate XBRL coverage is 82.9%; the figures and relevance labels still require manual verification, so this is not yet a certified benchmark.
+The September 2026 audit passes 271 offline tests and ran a live NVIDIA 10-Q through memo generation. A seven-company real review draft now contains 35 retrieval queries and 29 unique numeric checks. Draft aggregate XBRL coverage is 82.9%; the figures and relevance labels still require manual verification, so this is not yet a certified benchmark.
 
 A labeled evaluation benchmark, a browser UI, PostgreSQL/Redis, and Azure deployment remain open. Fiscal mapping supports regular quarterly/annual calendars; transition fiscal years need review. HTML fallback supports flat, explicitly dated English/ISO headers and table-local scale labels; complex spans remain gaps.
 
@@ -151,7 +164,8 @@ The Dockerfile runs as a non-root user and excludes local secrets. The image bui
 ## Code map
 
 - `src/pipeline/runner.py`: complete filing workflow and success-only acknowledgment
-- `src/pipeline/__main__.py`: demo, one-shot, and scheduled CLI
+- `src/pipeline/__main__.py`: backfill, demo, one-shot, and scheduled CLI
+- `src/pipeline/backfill.py`: seeds narrative baselines so cold starts are not inert
 - `src/ingestion/`: SEC client, XBRL normalization and coverage
 - `src/retrieval/`: HTML blocks, chunks, fallback, hybrid search, reranking and stack selection
 - `src/analyst/calculator.py`: deterministic comparisons and peer comparison utility
