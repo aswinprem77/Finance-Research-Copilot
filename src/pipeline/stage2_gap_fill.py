@@ -31,6 +31,8 @@ def fill_coverage_gaps_from_html(
     fiscal_year: int,
     fiscal_period: FiscalPeriod,
     period_end_date: date,
+    accession_number: str | None = None,
+    filed_date: date | None = None,
 ) -> GapFillResult:
     """
     For each concept `coverage` says XBRL couldn't resolve, parse
@@ -52,7 +54,9 @@ def fill_coverage_gaps_from_html(
     wins) — both to keep this cheap and to avoid picking up a stray
     same-labeled figure from an unrelated table further down the filing.
     """
-    still_missing = set(coverage.missing_concepts)
+    financials = financials.model_copy(deep=True)
+    existing = {f.concept for f in financials.facts if f.fiscal_year == fiscal_year and f.fiscal_period == fiscal_period}
+    still_missing = set(coverage.missing_concepts) - existing
     filled: list[FinancialConcept] = []
 
     if still_missing:
@@ -71,6 +75,8 @@ def fill_coverage_gaps_from_html(
             )
             for fact in candidate_facts:
                 if fact.concept in still_missing:
+                    fact.accession_number = accession_number
+                    fact.filed_date = filed_date
                     financials.facts.append(fact)
                     filled.append(fact.concept)
                     still_missing.discard(fact.concept)

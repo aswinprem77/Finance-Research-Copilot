@@ -39,7 +39,7 @@ def test_small_max_chunk_chars_splits_prose_into_more_chunks():
 def test_table_flattening_keeps_label_next_to_value():
     chunks = chunk_blocks(_load_blocks())
     table_chunk = next(c for c in chunks if c.kind == "table")
-    assert "Total revenue | $1,250,000" in table_chunk.text
+    assert "Total revenue | $1,250" in table_chunk.text  # raw table is in thousands
 
 
 def test_every_chunk_has_nonempty_section():

@@ -49,7 +49,7 @@ class FinancialFact(BaseModel):
     company_cik: str = Field(..., description="SEC Central Index Key, zero-padded to 10 digits")
     company_ticker: Optional[str] = None
     concept: FinancialConcept
-    value: float
+    value: float = Field(allow_inf_nan=False)
     unit: str = Field(default="USD")
     fiscal_year: int
     fiscal_period: FiscalPeriod

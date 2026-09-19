@@ -5,11 +5,9 @@ Fetches each watchlist company's filing history and normalizes it into
 FilingEvent objects, filtered to the form types this project actually
 processes (10-K/10-Q/8-K — see PRD Section 6 "Data Sources").
 
-Same network constraint as xbrl_client.py: this sandbox has no route to
-data.sec.gov. fetch_submissions() is written to the real API shape
-(SEC's `filings.recent` parallel-array structure) and tested against a
-synthetic fixture; live verification needs a real environment — see
-PROGRESS.md, same open item as the XBRL client.
+The automatic worker uses SecXbrlClient.get_submissions to share rate limiting
+with companyfacts and HTML requests. This module retains a standalone helper
+and normalizes SEC's filings.recent parallel-array structure.
 """
 from __future__ import annotations
 
@@ -25,7 +23,7 @@ SUBMISSIONS_BASE_URL = "https://data.sec.gov/submissions"
 # A CIK's submissions history includes many other form types (ownership forms,
 # proxy statements, etc.) that aren't in scope -- filtered out here, not downstream,
 # so nothing downstream has to re-implement this decision.
-RELEVANT_FORMS = {"10-K", "10-Q", "8-K"}
+RELEVANT_FORMS = {"10-K", "10-Q", "8-K", "10-K/A", "10-Q/A", "8-K/A"}
 
 
 @dataclass

@@ -8,6 +8,8 @@ last time it ran, defeating the entire point of "trigger on new".
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 
 DEFAULT_STATE_PATH = Path(__file__).parent.parent.parent / "data" / "trigger_state.json"
@@ -18,11 +20,22 @@ def load_seen_accessions(path: Path | str = DEFAULT_STATE_PATH) -> set[str]:
     if not path.exists():
         return set()
     with open(path, "r", encoding="utf-8") as fh:
-        return set(json.load(fh))
+        value = json.load(fh)
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError("Completion state must be a JSON list of accession strings")
+    return set(value)
 
 
 def save_seen_accessions(accessions: set[str], path: Path | str = DEFAULT_STATE_PATH) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(sorted(accessions), fh, indent=2)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(sorted(accessions), fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)

@@ -4,14 +4,16 @@ SEC XBRL companyfacts API client — Path A (structured), per PRD v2 Section 5, 
 This is intentionally a thin client: fetch raw JSON, do minimal validation, hand off to
 xbrl_parser.py to turn it into FinancialFact objects. No parsing logic lives here.
 
-IMPORTANT — not smoke-tested in this environment. This sandbox's outbound network allowlist
-does not include data.sec.gov, so this has only been checked against SEC's published API spec,
-not a live call. Test this from an unrestricted environment before trusting it. See PROGRESS.md.
+Companyfacts, submissions and primary HTML share one request-start limiter.
+Live NVIDIA smoke testing is recorded in PROGRESS.md; it is not a coverage benchmark.
 """
 
 from __future__ import annotations
 
 import time
+import re
+from threading import Lock
+from urllib.parse import quote
 from pathlib import Path
 from typing import Optional
 
@@ -40,15 +42,34 @@ class SecXbrlClient:
         if self.cache_dir:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._last_request_time: float = 0.0
+        self._request_lock = Lock()
 
     def _headers(self) -> dict:
         return {"User-Agent": self.user_agent, "Accept-Encoding": "gzip, deflate"}
 
     def _throttle(self) -> None:
-        elapsed = time.monotonic() - self._last_request_time
-        if elapsed < MIN_REQUEST_INTERVAL_SECONDS:
-            time.sleep(MIN_REQUEST_INTERVAL_SECONDS - elapsed)
-        self._last_request_time = time.monotonic()
+        with self._request_lock:
+            elapsed = time.monotonic() - self._last_request_time
+            if elapsed < MIN_REQUEST_INTERVAL_SECONDS:
+                time.sleep(MIN_REQUEST_INTERVAL_SECONDS - elapsed)
+            self._last_request_time = time.monotonic()
+
+    def _get(self, url: str):
+        self._throttle()
+        response = requests.get(url, headers=self._headers(), timeout=self.timeout)
+        response.raise_for_status()
+        return response
+
+    def get_submissions(self, cik: str) -> dict:
+        return self._get(f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json").json()
+
+    def get_filing_html(self, event) -> str:
+        accession = event.accession_number
+        document = event.primary_document
+        if not re.fullmatch(r"\d{10}-\d{2}-\d{6}", accession) or not document or any(s in document for s in ("..", "/", "\\", ":", "?", "#")):
+            raise ValueError("Invalid filing accession or primary document")
+        url = f"https://www.sec.gov/Archives/edgar/data/{int(event.company_cik)}/{accession.replace('-', '')}/{quote(document)}"
+        return self._get(url).text
 
     def _cache_path(self, cik: str) -> Optional[Path]:
         if not self.cache_dir:
@@ -63,17 +84,15 @@ class SecXbrlClient:
         use_cache: if a cache_dir was configured and a cached file exists, use it instead of
                    hitting the network again — keeps you inside the rate limit during dev/testing.
         """
-        cik_padded = str(cik).zfill(10)
+        cik_padded = str(int(cik)).zfill(10)
         cache_path = self._cache_path(cik_padded)
 
         if use_cache and cache_path and cache_path.exists():
             import json
             return json.loads(cache_path.read_text())
 
-        self._throttle()
         url = SEC_BASE_URL.format(cik=cik_padded)
-        resp = requests.get(url, headers=self._headers(), timeout=self.timeout)
-        resp.raise_for_status()
+        resp = self._get(url)
         data = resp.json()
 
         if cache_path:

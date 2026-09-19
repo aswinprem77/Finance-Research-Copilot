@@ -25,7 +25,7 @@ LABEL_PATTERNS: dict[FinancialConcept, list[str]] = {
     FinancialConcept.NET_INCOME: [r"\bnet income", r"\bnet loss"],
     FinancialConcept.GROSS_PROFIT: [r"\bgross profit"],
     FinancialConcept.OPERATING_INCOME: [r"\boperating income", r"\bincome from operations"],
-    FinancialConcept.TOTAL_DEBT: [r"\btotal debt", r"\blong.term debt"],
+    FinancialConcept.TOTAL_DEBT: [r"^total debt$", r"^total borrowings$"],
 }
 
 _NUMERIC_RE = re.compile(r"^\(?\$?\s*-?[\d,]+(\.\d+)?\)?$")
@@ -59,16 +59,26 @@ def extract_facts_from_table(
     fiscal_period: FiscalPeriod,
     period_end_date: date,
 ) -> list[FinancialFact]:
+    """Resolve an explicit dated column and scale; ambiguous tables stay missing.
+
+    Supports flat headers with an English or ISO date and an explicit
+    three-month/annual duration for flow concepts. Complex spans need review.
     """
-    For each row, try to match the first cell (the row label) to a known
-    concept, then take the FIRST numeric cell among the rest of the row as
-    its value — filing tables are typically
-    label | current-period | prior-period, so this picks the current
-    period's column. fiscal_year/fiscal_period/period_end_date are supplied
-    by the caller from the filing's known metadata, not inferred from the
-    table itself — header formats vary too much across filers to do that
-    reliably here.
-    """
+    if not table.rows or table.complex_layout:
+        return []
+    header = table.rows[0]
+    context = " ".join([table.caption or "", *header]).lower()
+    scales = [factor for word, factor in (("thousands", 1000), ("millions", 1000000), ("billions", 1000000000)) if word in context]
+    if len(scales) > 1 or any(currency in context for currency in ("eur", "euro", "gbp", "cad", "yen")):
+        return []
+    scale = scales[0] if scales else 1
+    date_patterns = [
+        period_end_date.isoformat(),
+        f"{period_end_date.strftime('%B')} {period_end_date.day}, {period_end_date.year}".lower(),
+    ]
+    columns = [i for i, cell in enumerate(header) if i > 0 and any(d in cell.lower() for d in date_patterns)]
+    expected_duration = ("year ended", "twelve months", "12 months") if fiscal_period == FiscalPeriod.FY else ("three months", "3 months")
+    flow_columns = [i for i in columns if any(d in header[i].lower() for d in expected_duration)]
     facts: list[FinancialFact] = []
     for row in table.rows:
         if len(row) < 2:
@@ -77,8 +87,11 @@ def extract_facts_from_table(
         concept = _match_concept(label)
         if concept is None:
             continue
-
-        value = next((v for v in (_parse_numeric_cell(c) for c in value_cells) if v is not None), None)
+        candidates = columns if concept == FinancialConcept.TOTAL_DEBT else flow_columns
+        if len(candidates) != 1 or candidates[0] >= len(row):
+            continue
+        column = candidates[0]
+        value = _parse_numeric_cell(row[column])
         if value is None:
             continue
 
@@ -86,13 +99,13 @@ def extract_facts_from_table(
             FinancialFact(
                 company_cik=company_cik,
                 concept=concept,
-                value=value,
+                value=value * scale,
                 unit="USD",
                 fiscal_year=fiscal_year,
                 fiscal_period=fiscal_period,
                 period_end_date=period_end_date,
                 source=FactSource.HTML_TABLE_FALLBACK,
-                source_tag=f"html_table:{label.strip()}",
+                source_tag=f"html_table:{label.strip()} [section={table.section}; table={table.order}; column={header[column]}; scale={scale}]",
             )
         )
     return facts

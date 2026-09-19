@@ -29,8 +29,8 @@ def test_table_block_captures_rows_and_caption():
     table = next(b for b in blocks if isinstance(b, TableBlock))
     assert table.caption is not None and "selected results" in table.caption.lower()
     revenue_row = next(r for r in table.rows if r[0] == "Total revenue")
-    assert revenue_row[1] == "$1,250,000"
-    assert revenue_row[2] == "$1,100,000"
+    assert revenue_row[1] == "$1,250"  # preserve printed units; fallback applies scale
+    assert revenue_row[2] == "$1,100"
 
 
 def test_document_order_preserved():

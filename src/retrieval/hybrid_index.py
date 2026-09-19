@@ -35,6 +35,9 @@ class RetrievedChunk:
 
 
 class HybridIndex:
+    def close(self) -> None:
+        self._client.close()
+
     def __init__(self, embedding_provider: EmbeddingProvider):
         self._embedder = embedding_provider
         self._client = QdrantClient(":memory:")

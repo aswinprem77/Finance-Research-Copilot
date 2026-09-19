@@ -6,4 +6,6 @@ data/trigger_state.json
 .pytest_cache/
 venv/
 examples/sample_memo_output.md
+data/demo/
+data/live/
 ".env" 

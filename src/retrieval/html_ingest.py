@@ -15,6 +15,7 @@ Phase 2 starting point, not a guarantee against every filer's quirks.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Union
 
 from bs4 import BeautifulSoup, Tag
@@ -35,6 +36,7 @@ class TableBlock:
     caption: str | None
     rows: list[list[str]]
     order: int
+    complex_layout: bool = False
 
 
 Block = Union[ProseBlock, TableBlock]
@@ -45,7 +47,12 @@ def parse_filing_html(html: str) -> list[Block]:
     Parse a filing HTML document into an ordered list of ProseBlock/TableBlock
     objects, each tagged with the nearest preceding heading as `section`.
     """
+    # Inline-XBRL filings are XHTML often prefixed with an XML declaration.
+    # Parse their HTML body, excluding hidden machine-readable facts.
+    html = re.sub(r"^\s*<\?xml[^>]*\?>", "", html, count=1)
     soup = BeautifulSoup(html, "lxml")
+    for hidden in soup.find_all(["script", "style", "ix:header", "ix:hidden"]):
+        hidden.decompose()
     body = soup.body or soup
 
     blocks: list[Block] = []
@@ -53,12 +60,14 @@ def parse_filing_html(html: str) -> list[Block]:
     order = 0
     last_paragraph_text: str | None = None
 
-    for el in body.find_all(HEADING_TAGS + ["p", "table"], recursive=True):
+    for el in body.find_all(HEADING_TAGS + ["p", "div", "table"], recursive=True):
         # Skip anything nested inside a <table> we'll capture as a whole
         # TableBlock below (e.g. a <p> inside a <td>) so it isn't also
         # picked up as a separate top-level ProseBlock.
         if el.find_parent("table") is not None:
             continue
+        if el.name == "div" and el.find(HEADING_TAGS + ["p", "div", "table"]) is not None:
+            continue  # capture leaf prose blocks without duplicating wrapper text
 
         if el.name in HEADING_TAGS:
             current_section = el.get_text(strip=True) or current_section
@@ -70,15 +79,22 @@ def parse_filing_html(html: str) -> list[Block]:
             if not rows:
                 continue
             blocks.append(
-                TableBlock(section=current_section, caption=last_paragraph_text, rows=rows, order=order)
+                TableBlock(section=current_section, caption=last_paragraph_text, rows=rows, order=order,
+                           complex_layout=el.find("table") is not None or any(
+                               cell.get("colspan", "1") != "1" or cell.get("rowspan", "1") != "1"
+                               for cell in el.find_all(["td", "th"])))
             )
             order += 1
             last_paragraph_text = None
             continue
 
         # <p>
-        text = el.get_text(strip=True)
+        text = el.get_text(" ", strip=True)
         if not text:
+            continue
+        if len(text) < 200 and re.match(r"^item\s+\d+[a-z]?\s*[.:-]", text, re.I):
+            current_section = text
+            last_paragraph_text = None
             continue
         blocks.append(ProseBlock(section=current_section, text=text, order=order))
         order += 1

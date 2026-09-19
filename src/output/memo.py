@@ -28,6 +28,7 @@ from typing import Optional
 from src.analyst.calculator import ComparisonResult
 from src.judgment.rubric import RUBRIC_VERSION, Flag
 from src.schema.financial_schema import CompanyFinancials, FactSource, FinancialConcept, FiscalPeriod
+from src.schema.citations import fact_citation
 
 SCOPE_DISCLAIMER = (
     "This is a decision-support summary, not an investment recommendation. "
@@ -43,6 +44,10 @@ class MetricRow:
     current_value: float
     percent_change: Optional[float]
     provenance: str  # "xbrl" | "derived" | "html_table_fallback" | "unknown"
+    comparison_value: Optional[float] = None
+    comparison_provenance: str = "unknown"
+    citation: str = ""
+    comparison_citation: str = ""
 
 
 @dataclass
@@ -72,8 +77,8 @@ class Memo:
             "",
             "## Key Metric Changes",
             "",
-            "| Metric | Period | Comparison | Value | Change | Source |",
-            "|---|---|---|---|---|---|",
+            "| Metric | Period | Comparison | Value | Prior value | Change | Source | Prior source | Citations |",
+            "|---|---|---|---|---|---|---|---|---|",
         ]
         provenance_marker = {
             "xbrl": "XBRL",
@@ -83,9 +88,12 @@ class Memo:
         }
         for r in self.metric_rows:
             change_str = f"{r.percent_change:+.2f}%" if r.percent_change is not None else "N/A"
+            prior_value = f"${r.comparison_value:,.0f}" if r.comparison_value is not None else "N/A"
+            citations = " / ".join(c for c in (r.citation, r.comparison_citation) if c).replace("|", "\\|").replace("\n", " ")
             lines.append(
                 f"| {r.concept} | {r.period_label} | {r.comparison_label} | "
-                f"${r.current_value:,.0f} | {change_str} | {provenance_marker.get(r.provenance, r.provenance)} |"
+                f"${r.current_value:,.0f} | {prior_value} | {change_str} | {provenance_marker.get(r.provenance, r.provenance)} | "
+                f"{provenance_marker.get(r.comparison_provenance, r.comparison_provenance)} | {citations} |"
             )
 
         lines += ["", "## Flagged Items"]
@@ -96,6 +104,7 @@ class Memo:
                 "",
                 f"**[{f.rule_id}]** {f.detail}",
                 f"- Cites: {f.citation}",
+                f"- Rule: {f.rule_description}",
                 "- For human review: yes — every Judgment agent flag is a screen, not a verdict (PRD Section 5).",
             ]
 
@@ -121,6 +130,11 @@ def _provenance_for(
     return "xbrl"
 
 
+def _citation_for(financials, concept, year, period):
+    fact = next((f for f in financials.facts_for(concept) if (f.fiscal_year, f.fiscal_period) == (year, period)), None)
+    return fact_citation(fact) if fact else "Source unavailable"
+
+
 def build_metric_rows(
     financials: CompanyFinancials, comparison_results: list[ComparisonResult]
 ) -> list[MetricRow]:
@@ -139,6 +153,10 @@ def build_metric_rows(
                 current_value=r.current_value,
                 percent_change=r.percent_change,
                 provenance=provenance,
+                comparison_value=r.comparison_value,
+                comparison_provenance=_provenance_for(financials, r.concept, r.comparison_fiscal_year, r.comparison_period),
+                citation=_citation_for(financials, r.concept, r.current_fiscal_year, r.current_period),
+                comparison_citation=_citation_for(financials, r.concept, r.comparison_fiscal_year, r.comparison_period),
             )
         )
     return rows
@@ -154,7 +172,7 @@ def _build_executive_summary(metric_rows: list[MetricRow], flags: list[Flag]) ->
     else:
         summary.append("No items met the current rubric's flagging thresholds this period.")
 
-    fallback_count = sum(1 for r in metric_rows if r.provenance == "html_table_fallback")
+    fallback_count = sum(1 for r in metric_rows if "html_table_fallback" in (r.provenance, r.comparison_provenance))
     if fallback_count:
         summary.append(
             f"{fallback_count} figure(s) below came from HTML-table fallback extraction, not XBRL "
@@ -177,6 +195,7 @@ def generate_memo(
     flags: list[Flag],
     data_provenance_note: str,
     rubric_version: str = RUBRIC_VERSION,
+    current_period: tuple[int, FiscalPeriod] | None = None,
 ) -> Memo:
     """
     `data_provenance_note` is REQUIRED — no default value. Forces every caller to
@@ -185,7 +204,23 @@ def generate_memo(
     "SYNTHETIC TEST FIXTURE — not a real company, for pipeline demonstration only".
     This can't be forgotten or defaulted away; the function signature won't allow it.
     """
+    if not data_provenance_note.strip():
+        raise ValueError("A nonempty data provenance note is required")
     metric_rows = build_metric_rows(financials, comparison_results)
+    represented = {(r.concept, r.period_label) for r in metric_rows}
+    for fact in financials.facts:
+        if current_period is not None and (fact.fiscal_year, fact.fiscal_period) != current_period:
+            continue
+        label = f"{fact.fiscal_period.value} FY{fact.fiscal_year}"
+        if (fact.concept.value, label) in represented:
+            continue
+        represented.add((fact.concept.value, label))
+        metric_rows.append(MetricRow(
+            concept=fact.concept.value, period_label=label, comparison_label="No comparable prior figure",
+            current_value=fact.value, percent_change=None,
+            provenance=_provenance_for(financials, fact.concept, fact.fiscal_year, fact.fiscal_period),
+            citation=fact_citation(fact),
+        ))
     executive_summary = _build_executive_summary(metric_rows, flags)
 
     return Memo(

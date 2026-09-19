@@ -3,13 +3,9 @@ Trigger Agent — Stage 1, PRD v2 Section 5: "Polls SEC EDGAR's filing index
 on a schedule for new filings from a defined watchlist... On detection,
 kicks off the pipeline for that filing."
 
-This module covers detection only (poll -> diff against seen -> return new
-events). Actually kicking off the rest of the pipeline for each new event
-is the full orchestration PRD Section 5 calls out as its own concern
-("Orchestration: simple state machine... coordinating the five stages")
-and Section 9 schedules for Weeks 8-9 (Phase 4), after Trigger and
-Judgment exist independently -- which is where this project is right now.
-See PROGRESS.md.
+This legacy utility acknowledges detection immediately and is retained for
+the stage-level demo. The automatic worker in src.pipeline.runner uses
+success-only completion state instead; use that worker for memo delivery.
 """
 from __future__ import annotations
 
