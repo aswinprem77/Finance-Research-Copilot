@@ -30,7 +30,7 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Response
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from src.pipeline.watchlist import load_watchlist
 from src.service.auth import ApiKeyMiddleware, load_api_keys
@@ -38,6 +38,7 @@ from src.service.pdf import memo_pdf_bytes
 from src.service.records import RunRecord, list_run_records, load_run_record
 
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "live"
+UI_PATH = Path(__file__).parent / "ui.html"
 
 
 def _data_dir() -> Path:
@@ -78,6 +79,18 @@ def create_app(data_dir: Path | str | None = None,
         if record is None:
             raise HTTPException(status_code=404, detail=f"No processed filing {accession}")
         return record
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def index() -> str:
+        """
+        The browser UI shell.
+
+        Read per request rather than cached at startup so editing the page
+        does not need a restart, and served without a key because a page
+        navigation cannot carry one - see PUBLIC_PATHS in auth.py. It holds
+        no filing data; everything it shows is fetched with the key.
+        """
+        return UI_PATH.read_text(encoding="utf-8")
 
     @app.get("/livez", tags=["service"])
     def livez() -> dict:

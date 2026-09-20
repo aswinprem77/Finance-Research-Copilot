@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Financial Research Copilot</title>
+<style>
+  :root {
+    --bg:#f6f7f9; --panel:#ffffff; --line:#d8dde4; --ink:#16191d; --muted:#5c6570;
+    --notable:#b4462a; --routine:#5c6570; --accent:#2c5f8a; --warn:#8a5a00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171a; --panel:#1c2024; --line:#2e343b; --ink:#e7eaee; --muted:#9aa4b0;
+            --notable:#e08163; --routine:#9aa4b0; --accent:#78b0dd; --warn:#d6a441; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  header { background:var(--panel); border-bottom:1px solid var(--line); padding:14px 20px;
+           display:flex; gap:16px; align-items:baseline; flex-wrap:wrap; }
+  h1 { font-size:16px; margin:0; font-weight:650; }
+  .sub { color:var(--muted); font-size:12px; }
+  .spacer { flex:1; }
+  main { padding:20px; max-width:1500px; margin:0 auto; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:6px;
+           padding:16px; margin-bottom:16px; }
+  .filters { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
+  select, input, button { font:inherit; padding:6px 9px; border:1px solid var(--line);
+                          border-radius:4px; background:var(--panel); color:var(--ink); }
+  button { cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { text-align:left; padding:7px 9px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase;
+       letter-spacing:.04em; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.row { cursor:pointer; }
+  tr.row:hover td { background:rgba(127,127,127,.09); }
+  tr.row.active td { background:rgba(127,127,127,.16); }
+  .pill { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px;
+          border:1px solid var(--line); }
+  .notable { color:var(--notable); font-weight:600; }
+  .routine { color:var(--routine); }
+  .warn { color:var(--warn); }
+  .muted { color:var(--muted); }
+  .flag { border-left:3px solid var(--line); padding:8px 0 8px 12px; margin:12px 0; }
+  .flag.is-notable { border-left-color:var(--notable); }
+  .flag .rule { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:11.5px;
+                color:var(--muted); }
+  .flag .detail { white-space:pre-wrap; margin:4px 0; }
+  .links a { color:var(--accent); margin-right:14px; }
+  .empty { color:var(--muted); padding:22px 0; }
+  .banner { border:1px solid var(--warn); color:var(--warn); border-radius:6px;
+            padding:10px 14px; margin-bottom:16px; }
+  .disclaimer { color:var(--muted); font-size:12px; border-top:1px solid var(--line);
+                padding-top:12px; margin-top:8px; }
+  details summary { cursor:pointer; color:var(--muted); }
+  @media (max-width:900px) { .wide { overflow-x:auto; } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Financial Research Copilot</h1>
+    <div class="sub" id="status">Loading…</div>
+  </div>
+  <div class="spacer"></div>
+  <div id="keybox" style="display:none">
+    <input id="key" type="password" placeholder="API key" size="26" autocomplete="off">
+    <button class="primary" id="save">Use key</button>
+  </div>
+  <button id="refresh">Refresh</button>
+</header>
+
+<main>
+  <div id="banner"></div>
+
+  <div class="panel">
+    <div class="filters">
+      <select id="f-cik"><option value="">All companies</option></select>
+      <select id="f-form">
+        <option value="">All forms</option>
+        <option value="10-Q">10-Q</option>
+        <option value="10-K">10-K</option>
+        <option value="8-K">8-K</option>
+      </select>
+      <label><input type="checkbox" id="f-notable"> Notable findings only</label>
+      <span class="spacer"></span>
+      <span class="sub" id="count"></span>
+    </div>
+    <div class="wide"><table id="list">
+      <thead><tr>
+        <th>Company</th><th>Form</th><th>Filed</th><th class="num">Coverage</th>
+        <th class="num">Notable</th><th class="num">Routine</th><th>Peers</th><th>Alert</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <div class="empty" id="list-empty" style="display:none">
+      No processed filings yet. Run <code>python -m src.pipeline --once</code>.
+    </div>
+  </div>
+
+  <div id="detail"></div>
+</main>
+
+<script>
+"use strict";
+// The page renders what the API already decided. It deliberately computes no
+// margins, thresholds or severities of its own: a second implementation of the
+// rubric in JavaScript would drift from the Python one and there would be no
+// way to tell which a reader was looking at.
+const KEY_STORE = "copilot_api_key";
+const $ = (id) => document.getElementById(id);
+let selected = null;
+
+function apiKey() {
+  try { return sessionStorage.getItem(KEY_STORE) || ""; } catch { return ""; }
+}
+function setApiKey(value) {
+  try { value ? sessionStorage.setItem(KEY_STORE, value) : sessionStorage.removeItem(KEY_STORE); }
+  catch { /* private browsing: the key simply is not remembered */ }
+}
+
+async function api(path) {
+  const headers = {};
+  const key = apiKey();
+  if (key) headers["X-API-Key"] = key;
+  const response = await fetch(path, { headers });
+  if (response.status === 401) { needKey(); throw new Error("unauthorised"); }
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return response.json();
+}
+
+function needKey() {
+  $("keybox").style.display = "";
+  $("status").textContent = "API key required.";
+  banner("This server requires an API key. Paste it above; it is kept for this browser tab only.");
+}
+
+function banner(message, tone) {
+  $("banner").innerHTML = message
+    ? `<div class="banner" ${tone ? `style="border-color:var(--${tone});color:var(--${tone})"` : ""}>${esc(message)}</div>`
+    : "";
+}
+
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+const money = (v) => v === null || v === undefined ? "N/A"
+  : (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
+const pct = (v, d = 1) => v === null || v === undefined ? "N/A" : v.toFixed(d) + "%";
+
+const PROVENANCE = {
+  xbrl: ["XBRL", ""],
+  derived: ["derived", "muted"],
+  html_table_fallback: ["HTML fallback — review", "warn"],
+  unknown: ["unknown", "muted"],
+};
+
+async function boot() {
+  try {
+    const health = await api("/health");
+    $("keybox").style.display = apiKey() ? "" : "none";
+    banner("");
+    $("status").textContent =
+      `${health.processed_filings} processed filing(s) · ${esc(health.data_dir)}`;
+    await loadWatchlist();
+    await loadList();
+  } catch (err) {
+    if (err.message !== "unauthorised") {
+      $("status").textContent = "Cannot reach the API.";
+      banner(`Could not load: ${err.message}`);
+    }
+  }
+}
+
+async function loadWatchlist() {
+  try {
+    const wl = await api("/watchlist");
+    const select = $("f-cik");
+    for (const company of wl.companies) {
+      const option = document.createElement("option");
+      option.value = company.cik;
+      option.textContent = `${company.ticker} — ${company.name}`;
+      select.appendChild(option);
+    }
+  } catch { /* the listing still works without the filter populated */ }
+}
+
+async function loadList() {
+  const params = new URLSearchParams();
+  if ($("f-cik").value) params.set("cik", $("f-cik").value);
+  if ($("f-form").value) params.set("form", $("f-form").value);
+  if ($("f-notable").checked) params.set("notable_only", "true");
+
+  const data = await api("/filings?" + params.toString());
+  const body = $("list").querySelector("tbody");
+  body.innerHTML = "";
+  $("count").textContent = `${data.count} filing(s)`;
+  $("list-empty").style.display = data.filings.length ? "none" : "";
+
+  for (const filing of data.filings) {
+    const row = document.createElement("tr");
+    row.className = "row" + (filing.accession_number === selected ? " active" : "");
+    const coverage = filing.form.startsWith("8-K") ? '<span class="muted">n/a</span>'
+      : pct(filing.coverage_pct, 0);
+    row.innerHTML = `
+      <td><strong>${esc(filing.company_ticker || filing.company_cik)}</strong>
+          <div class="sub">${esc(filing.company_name)}</div></td>
+      <td>${esc(filing.form)}</td>
+      <td>${esc(filing.filing_date)}</td>
+      <td class="num">${coverage}</td>
+      <td class="num ${filing.notable_flags ? "notable" : "muted"}">${filing.notable_flags}</td>
+      <td class="num routine">${filing.routine_flags}</td>
+      <td>${filing.has_peer_comparison ? '<span class="pill">yes</span>' : '<span class="muted">—</span>'}</td>
+      <td class="sub">${esc(filing.delivery_status || "—")}</td>`;
+    row.onclick = () => showDetail(filing.accession_number);
+    body.appendChild(row);
+  }
+}
+
+async function showDetail(accession) {
+  selected = accession;
+  await loadList();
+  const record = await api(`/filings/${accession}`);
+  const notable = record.flags.filter((f) => f.severity !== "routine");
+  const routine = record.flags.filter((f) => f.severity === "routine");
+
+  const metrics = record.metric_rows.length ? `
+    <h3>Key metric changes</h3>
+    <div class="wide"><table>
+      <thead><tr><th>Metric</th><th>Period</th><th>Comparison</th><th class="num">Value</th>
+      <th class="num">Prior</th><th class="num">Change</th><th>Source</th></tr></thead>
+      <tbody>${record.metric_rows.map((r) => {
+        const [label, cls] = PROVENANCE[r.provenance] || [r.provenance, "muted"];
+        return `<tr>
+          <td>${esc(r.concept)}</td><td>${esc(r.period_label)}</td>
+          <td class="sub">${esc(r.comparison_label)}</td>
+          <td class="num">${money(r.current_value)}</td>
+          <td class="num">${money(r.comparison_value)}</td>
+          <td class="num">${r.percent_change === null || r.percent_change === undefined
+            ? "N/A" : (r.percent_change >= 0 ? "+" : "") + r.percent_change.toFixed(2) + "%"}</td>
+          <td class="${cls}">${esc(label)}</td></tr>`;
+      }).join("")}</tbody>
+    </table></div>` : "";
+
+  const peers = record.peer_comparison ? renderPeers(record.peer_comparison) : "";
+
+  $("detail").innerHTML = `
+    <div class="panel">
+      <h2 style="margin:0 0 2px">${esc(record.company_name)} — ${esc(record.form)}</h2>
+      <div class="sub">Accession ${esc(record.accession_number)} · filed ${esc(record.filing_date)}
+        ${record.report_date ? "· period ended " + esc(record.report_date) : ""}
+        · rubric ${esc(record.rubric_version)}</div>
+      <p class="links" style="margin:12px 0">
+        <a href="/filings/${accession}/memo.md" target="_blank" rel="noopener">Memo (Markdown)</a>
+        <a href="#" id="pdf-link">Download PDF</a>
+        <a href="https://www.sec.gov/Archives/edgar/data/${parseInt(record.company_cik, 10)}/${accession.replace(/-/g, "")}/${accession}-index.html"
+           target="_blank" rel="noopener">Filing on EDGAR</a>
+      </p>
+      ${record.executive_summary.length ? `<h3>Executive summary</h3><ul>${
+        record.executive_summary.map((line) => `<li>${esc(line)}</li>`).join("")}</ul>` : ""}
+      ${metrics}
+      ${peers}
+      <h3>Flagged items <span class="sub">(${notable.length} notable)</span></h3>
+      ${notable.length ? notable.map(renderFlag).join("")
+        : '<div class="empty">Nothing met the current rubric’s thresholds.</div>'}
+      ${routine.length ? `<details style="margin-top:14px">
+          <summary>${routine.length} routine item(s) — repeat prior-filing language, not changes</summary>
+          ${routine.map(renderFlag).join("")}
+        </details>` : ""}
+      <div class="disclaimer">
+        Every flag is a screen, not a verdict — for human review.
+        ${esc(record.data_provenance_note)}
+      </div>
+    </div>`;
+
+  // The PDF needs the key, so it cannot be a plain link when auth is on.
+  $("pdf-link").onclick = async (event) => {
+    event.preventDefault();
+    const headers = {};
+    if (apiKey()) headers["X-API-Key"] = apiKey();
+    const response = await fetch(`/filings/${accession}/memo.pdf`, { headers });
+    if (!response.ok) { banner(`PDF unavailable (${response.status})`); return; }
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url; link.download = `${accession}.pdf`; link.click();
+    URL.revokeObjectURL(url);
+  };
+  $("detail").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderPeers(peers) {
+  const rows = [peers.subject, ...peers.peers].filter(Boolean).map((r) => {
+    if (r.unavailable_reason) {
+      return `<tr><td>${esc(r.company_ticker || r.company_cik)}</td>
+        <td colspan="6" class="muted">not aligned — ${esc(r.unavailable_reason)}</td></tr>`;
+    }
+    const offset = r.is_subject ? "subject"
+      : (r.end_offset_days === null ? "—" : (r.end_offset_days >= 0 ? "+" : "") + r.end_offset_days + "d");
+    return `<tr>
+      <td>${esc(r.company_ticker || r.company_cik)}${r.is_subject ? " <em>(subject)</em>" : ""}</td>
+      <td>${esc(r.fiscal_period || "—")} FY${esc(r.fiscal_year || "—")}</td>
+      <td>${esc(r.period_end_date)}</td>
+      <td class="num">${esc(offset)}</td>
+      <td class="num">${money(r.revenue)}</td>
+      <td class="num">${money(r.net_income)}</td>
+      <td class="num">${pct(r.net_margin_pct)}</td></tr>`;
+  }).join("");
+  return `<h3>Peer comparison</h3>
+    <p class="sub">${esc(peers.alignment_note)}</p>
+    <div class="wide"><table>
+      <thead><tr><th>Company</th><th>Period</th><th>Period end</th><th class="num">Offset</th>
+      <th class="num">Revenue</th><th class="num">Net income</th><th class="num">Net margin</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+}
+
+function renderFlag(flag) {
+  const isNotable = flag.severity !== "routine";
+  return `<div class="flag ${isNotable ? "is-notable" : ""}">
+    <div class="rule">${esc(flag.rule_id)} · ${esc(flag.severity)}</div>
+    <div class="detail">${esc(flag.detail)}</div>
+    <div class="sub">Cites: ${esc(flag.citation)}</div>
+    <div class="sub">Rule: ${esc(flag.rule_description)}</div>
+  </div>`;
+}
+
+$("save").onclick = () => { setApiKey($("key").value.trim()); $("key").value = ""; boot(); };
+$("key").onkeydown = (e) => { if (e.key === "Enter") $("save").click(); };
+$("refresh").onclick = () => boot();
+for (const id of ["f-cik", "f-form", "f-notable"]) {
+  $(id).onchange = () => loadList().catch(() => {});
+}
+boot();
+</script>
+</body>
+</html>

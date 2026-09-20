@@ -25,7 +25,7 @@ Copy-Item .env.example .env        # then set SEC_USER_AGENT to "Your Name you@e
 .\venv\Scripts\python.exe -m src.pipeline --interval 900      # or run it on a schedule
 
 # 5. Read the results
-.\venv\Scripts\python.exe -m src.service --data-dir data/live  # http://127.0.0.1:8000/docs
+.\venv\Scripts\python.exe -m src.service --data-dir data/live  # http://127.0.0.1:8000
 ```
 
 Memos land in `data/live/memos/` as Markdown. `data/live/records/` holds the same
@@ -151,7 +151,7 @@ Each memo names the stack that produced its narrative evidence. Every review que
 
 ## Validation and limits
 
-The September 2026 audit passes 324 offline tests and ran a live NVIDIA 10-Q through memo generation. A seven-company real review draft now contains 35 retrieval queries and 29 unique numeric checks. Draft aggregate XBRL coverage is 82.9%; the figures and relevance labels still require manual verification, so this is not yet a certified benchmark.
+The September 2026 audit passes 330 offline tests and ran a live NVIDIA 10-Q through memo generation. A seven-company real review draft now contains 35 retrieval queries and 29 unique numeric checks. Draft aggregate XBRL coverage is 82.9%; the figures and relevance labels still require manual verification, so this is not yet a certified benchmark.
 
 A labeled evaluation benchmark, a browser UI, PostgreSQL/Redis, and Azure deployment remain open. Fiscal mapping supports regular quarterly/annual calendars; transition fiscal years need review. HTML fallback supports flat, explicitly dated English/ISO headers and table-local scale labels; complex spans remain gaps.
 
@@ -203,7 +203,11 @@ Each processed filing now also writes a structured run record beside its memo, u
 .\venv\Scripts\python.exe -m src.service --data-dir data/live
 ```
 
-Open `http://127.0.0.1:8000/docs`. Endpoints: `/health`, `/watchlist`, `/filings` (filter by `cik`, `form`, `notable_only`), `/filings/{accession}`, `/filings/{accession}/flags`, `/filings/{accession}/peers`, `/filings/{accession}/memo.md`, `/filings/{accession}/memo.pdf`.
+Open `http://127.0.0.1:8000` for the browser UI: a filing list with company, form and notable-only filters, and a detail view with the executive summary, metric table with its provenance markers, the peer comparison with each row's alignment offset, and flags split notable from routine. It is one static page with no build step, and it renders what the records already say rather than recomputing any of it — a second implementation of the rubric in JavaScript would drift from the Python one.
+
+The page itself loads without a key, because a browser cannot attach a header to a page navigation and the page is what asks for it; it carries no filing data, and everything it shows arrives through an authenticated fetch. The key is kept in `sessionStorage` for that tab only.
+
+`http://127.0.0.1:8000/docs` has the API reference. Endpoints: `/health`, `/watchlist`, `/filings` (filter by `cik`, `form`, `notable_only`), `/filings/{accession}`, `/filings/{accession}/flags`, `/filings/{accession}/peers`, `/filings/{accession}/memo.md`, `/filings/{accession}/memo.pdf`.
 
 The API is read-only. Authentication is a shared API key in `COPILOT_API_KEYS`, sent as an `X-API-Key` header or an `Authorization: Bearer` token. With no key set the API is open **but can only bind to localhost** - `--host` anything else is refused at startup, so nothing is exposed without that being a decision someone made. Every route is covered including `/docs` and `/openapi.json`; only `/livez` is reachable without a key, so container probes do not need the credential. Keys are compared in constant time and several may be configured at once for rotation.
 
@@ -234,5 +238,5 @@ The Dockerfile runs as a non-root user and excludes local secrets. The image bui
 - `src/judgment/narrative.py`, `narrative_store.py`: prior-filing language comparison and its durable baselines
 - `src/output/memo.py`: memo tables, citations and review notes
 - `src/evaluation/review_app.py`: local human-labeling interface and guarded benchmark compilation
-- `src/service/`: structured run records, the read API with API-key auth, PDF rendering and alert delivery
+- `src/service/`: structured run records, the read API with API-key auth, the browser UI, PDF rendering and alert delivery
 - `tests/`: offline unit and integration tests

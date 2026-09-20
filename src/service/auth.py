@@ -41,9 +41,17 @@ from starlette.responses import JSONResponse
 ENV_API_KEYS = "COPILOT_API_KEYS"
 HEADER_NAME = "X-API-Key"
 
-# Reachable without a key so a load balancer or container probe does not need
-# the credential. It reports liveness only - no paths, counts or filing data.
-PUBLIC_PATHS = frozenset({"/livez"})
+# Reachable without a key.
+#
+# /livez so a load balancer or container probe does not need the credential;
+# it reports liveness only - no paths, counts or filing data.
+#
+# "/" is the UI shell. A browser cannot attach a custom header to a page
+# navigation, so a page that asks for the key has to load without one. The
+# shell carries no filing data, no paths and no counts - it is the same
+# markup that sits in the repository - and every byte it displays arrives
+# through an authenticated fetch.
+PUBLIC_PATHS = frozenset({"/livez", "/"})
 
 
 def load_api_keys(env: dict[str, str] | None = None) -> set[str]:
