@@ -22,7 +22,7 @@ import tempfile
 from datetime import date
 from pathlib import Path
 
-from src.judgment.narrative import FilingNarrative
+from src.judgment.narrative import FilingNarrative, form_class
 
 ACCESSION_PATTERN = re.compile(r"\d{10}-\d{2}-\d{6}")
 
@@ -85,9 +85,14 @@ def load_prior_narrative(
     *,
     before: date,
     exclude_accession: str | None = None,
+    comparable_to: str | None = None,
 ) -> FilingNarrative | None:
     """
     The company's most recent stored filing from strictly before `before`.
+
+    `comparable_to` is the form of the filing being processed; only baselines
+    of the same class are considered, so a 10-Q is never compared against an
+    8-K filed between it and the previous 10-Q.
 
     Ties on filing date are broken by accession number so the choice of
     baseline is deterministic when a company files twice in one day. A
@@ -107,6 +112,12 @@ def load_prior_narrative(
         if narrative.accession_number == exclude_accession:
             continue
         if narrative.filing_date >= before:
+            continue
+        if comparable_to is not None and form_class(narrative.form) != form_class(comparable_to):
+            continue
+        if not narrative.passages:
+            # A baseline with nothing screened cannot establish that anything
+            # changed, and picking it would hide a usable older one.
             continue
         candidates.append(narrative)
     if not candidates:

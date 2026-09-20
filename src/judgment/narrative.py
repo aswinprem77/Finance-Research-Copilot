@@ -60,6 +60,18 @@ from src.retrieval.chunking import Chunk
 
 NARRATIVE_VERSION = "v1"
 
+# A 10-Q's risk factors are the successor of the previous 10-Q's or 10-K's,
+# not of an 8-K filed in between. An 8-K is a short event filing, so
+# comparing a full periodic report against one finds almost nothing in
+# common and reports the entire filing as new. Baselines are therefore
+# matched within a class: periodic against periodic, event against event.
+PERIODIC_FORMS = frozenset({"10-K", "10-Q"})
+
+
+def form_class(form: str) -> str:
+    """Which filings are comparable with which. Amendments share their base form's class."""
+    return "periodic" if form.replace("/A", "").strip() in PERIODIC_FORMS else "event"
+
 # Keyword sets, one per screened topic. Same "narrow and grow it" philosophy
 # as LITIGATION_KEYWORDS in rubric.py: a miss is a documented gap, a false
 # flag from an overly broad term erodes trust in every other flag.

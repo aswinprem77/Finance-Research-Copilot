@@ -43,8 +43,11 @@ def test_save_replaces_an_earlier_record_in_place(tmp_path):
 
 def test_records_are_separated_by_company(tmp_path):
     save_narrative(_narrative("0000320193-24-000020", date(2024, 7, 20)), tmp_path)
-    other = FilingNarrative(company_cik="0000789019", accession_number="0000789019-24-000005",
-                            form="10-Q", filing_date=date(2024, 7, 20), passages=[])
+    other = FilingNarrative(
+        company_cik="0000789019", accession_number="0000789019-24-000005", form="10-Q",
+        filing_date=date(2024, 7, 20),
+        passages=[NarrativePassage("p1", "Item 1A. Risk Factors", "A lawsuit was filed.",
+                                   ("LITIGATION",))])
     save_narrative(other, tmp_path)
     assert load_prior_narrative(tmp_path, "0000789019", before=date(2024, 12, 31)).accession_number == \
         "0000789019-24-000005"
@@ -120,3 +123,38 @@ def test_every_baseline_being_unreadable_returns_none(tmp_path):
     (tmp_path / CIK).mkdir(parents=True)
     (tmp_path / CIK / "0000320193-24-000015.json").write_text("{ not json", encoding="utf-8")
     assert load_prior_narrative(tmp_path, CIK, before=date(2024, 7, 20)) is None
+
+
+def test_an_empty_baseline_is_skipped_for_a_usable_older_one(tmp_path):
+    # A filing with nothing screened cannot establish that anything changed,
+    # and picking it would hide a baseline that can.
+    save_narrative(_narrative("0000320193-24-000010", date(2024, 1, 20)), tmp_path)
+    empty = FilingNarrative(company_cik=CIK, accession_number="0000320193-24-000015",
+                            form="10-Q", filing_date=date(2024, 2, 20), passages=[])
+    save_narrative(empty, tmp_path)
+    prior = load_prior_narrative(tmp_path, CIK, before=date(2024, 7, 20))
+    assert prior.accession_number == "0000320193-24-000010"
+
+
+def test_a_periodic_filing_is_not_compared_against_an_event_filing(tmp_path):
+    # An 8-K is a short event filing; comparing a 10-Q against one finds almost
+    # nothing in common and reports the whole filing as new.
+    save_narrative(_narrative("0000320193-24-000010", date(2024, 4, 20)), tmp_path)
+    event_filing = FilingNarrative(
+        company_cik=CIK, accession_number="0000320193-24-000018", form="8-K",
+        filing_date=date(2024, 7, 1),
+        passages=[NarrativePassage("p1", "Item 8.01", "A lawsuit update.", ("LITIGATION",))])
+    save_narrative(event_filing, tmp_path)
+
+    periodic = load_prior_narrative(tmp_path, CIK, before=date(2024, 7, 20), comparable_to="10-Q")
+    assert periodic.accession_number == "0000320193-24-000010"
+
+    # And an 8-K compares against the 8-K, not the 10-Q.
+    event = load_prior_narrative(tmp_path, CIK, before=date(2024, 7, 20), comparable_to="8-K")
+    assert event.accession_number == "0000320193-24-000018"
+
+
+def test_amendments_share_their_base_form_class(tmp_path):
+    save_narrative(_narrative("0000320193-24-000010", date(2024, 4, 20)), tmp_path)
+    prior = load_prior_narrative(tmp_path, CIK, before=date(2024, 7, 20), comparable_to="10-Q/A")
+    assert prior.accession_number == "0000320193-24-000010"

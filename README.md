@@ -2,6 +2,50 @@
 
 SEC filing research with deterministic XBRL comparisons, hybrid retrieval, rule-based screening, and cited Markdown memos. [PRD.md](PRD.md) is the product specification; [PRD_AUDIT.md](PRD_AUDIT.md) records implemented fixes and remaining gaps. Read [PROGRESS.md](PROGRESS.md) when resuming development.
 
+## Quickstart
+
+The whole path, in order. Steps 1-3 are one-time setup; 4 onward is normal use.
+
+```powershell
+# 1. Install
+python -m venv venv
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item .env.example .env        # then set SEC_USER_AGENT to "Your Name you@example.com"
+
+# 2. Check it works offline (no network, no SEC access needed)
+.\venv\Scripts\python.exe -m pytest -q
+.\venv\Scripts\python.exe -m src.pipeline --demo
+
+# 3. Seed narrative baselines. Do this BEFORE the first live poll, or every
+#    language finding reads "unestablished" until each company files twice.
+.\venv\Scripts\python.exe -m src.pipeline --backfill
+
+# 4. Poll for new filings and write memos
+.\venv\Scripts\python.exe -m src.pipeline --once
+.\venv\Scripts\python.exe -m src.pipeline --interval 900      # or run it on a schedule
+
+# 5. Read the results
+.\venv\Scripts\python.exe -m src.service --data-dir data/live  # http://127.0.0.1:8000/docs
+```
+
+Memos land in `data/live/memos/` as Markdown. `data/live/records/` holds the same
+content structured, which is what the API and the PDF export read.
+
+**Set `SEC_USER_AGENT` before step 3** — SEC rejects requests without a descriptive
+one. Alerts are optional: set `SLACK_WEBHOOK_URL` or the SMTP variables in `.env`
+and filings with notable findings are delivered as they are processed.
+
+What a run looks like against the real watchlist, seeded and polled from scratch:
+
+| Ticker | Form | XBRL coverage | Notable | Routine | Peers aligned |
+|---|---|---:|---:|---:|---:|
+| AVGO | 10-Q | 100% | 19 | 13 | 5/6 |
+| NVDA | 10-Q | 80% | 19 | 3 | 4/6 |
+| AMD | 10-Q | 100% | 19 | 14 | 4/6 |
+
+Notable items are changes worth a look; routine ones repeat prior-filing language
+and are listed separately. Unresolved figures are named rather than guessed.
+
 ## Run on Windows
 
 Requires Python 3.11 or newer.
@@ -107,7 +151,7 @@ Each memo names the stack that produced its narrative evidence. Every review que
 
 ## Validation and limits
 
-The September 2026 audit passes 301 offline tests and ran a live NVIDIA 10-Q through memo generation. A seven-company real review draft now contains 35 retrieval queries and 29 unique numeric checks. Draft aggregate XBRL coverage is 82.9%; the figures and relevance labels still require manual verification, so this is not yet a certified benchmark.
+The September 2026 audit passes 305 offline tests and ran a live NVIDIA 10-Q through memo generation. A seven-company real review draft now contains 35 retrieval queries and 29 unique numeric checks. Draft aggregate XBRL coverage is 82.9%; the figures and relevance labels still require manual verification, so this is not yet a certified benchmark.
 
 A labeled evaluation benchmark, a browser UI, PostgreSQL/Redis, and Azure deployment remain open. Fiscal mapping supports regular quarterly/annual calendars; transition fiscal years need review. HTML fallback supports flat, explicitly dated English/ISO headers and table-local scale labels; complex spans remain gaps.
 

@@ -187,7 +187,8 @@ def process_filing(event: FilingEvent, fetch_companyfacts: Callable, fetch_html:
             # cannot compare it against one that did not exist yet.
             prior = load_prior_narrative(narrative_dir, event.company_cik,
                                          before=event.filing_date,
-                                         exclude_accession=event.accession_number)
+                                         exclude_accession=event.accession_number,
+                                         comparable_to=event.form)
         # Path B ranks the screened passages. It only breaks ties within a
         # status, so it can reorder a capped list but never suppress a flag.
         relevance_order: list[str] = []

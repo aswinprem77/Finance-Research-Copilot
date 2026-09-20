@@ -3,7 +3,10 @@ import json
 import tempfile
 from pathlib import Path
 
+from src.judgment.narrative import screen_filing_narrative
 from src.judgment.narrative_store import load_narrative, save_narrative
+from src.retrieval.chunking import chunk_blocks
+from src.retrieval.html_ingest import parse_filing_html
 from src.pipeline.runner import process_filing, run_poll_cycle
 from src.pipeline.watchlist import Watchlist, WatchlistCompany
 from src.trigger.edgar_client import FilingEvent
@@ -89,15 +92,23 @@ def test_poll_continues_after_one_company_fetch_fails(tmp_path):
 
 # --- prior-filing narrative comparison ---------------------------------------
 
-# An 8-K keeps these tests on the narrative path alone: the synthetic
-# companyfacts fixture has no later periodic period to resolve against.
-def _later_event(accession="0000320193-24-000031"):
-    return FilingEvent("0000320193", "SYNTHETIC TEST CO", accession, "8-K",
-                       date(2024, 10, 20), date(2024, 9, 30), "test.htm")
+PRIOR_ACCESSION = "0000320193-24-000010"
 
 
-def _no_facts(cik):
-    raise AssertionError("8-K should not fetch periodic facts")
+def _seed_prior(narrative_dir, source_html: str, accession=PRIOR_ACCESSION):
+    """
+    Store a previous 10-Q as the baseline.
+
+    The baseline must be the same form class as the filing under test: a 10-Q
+    is never compared against an 8-K, so these tests seed a periodic filing
+    rather than reusing the fixture's 8-K path.
+    """
+    narrative = screen_filing_narrative(
+        chunk_blocks(parse_filing_html(source_html)),
+        company_cik="0000320193", accession_number=accession, form="10-Q",
+        filing_date=date(2024, 4, 20), report_date=date(2024, 3, 31))
+    save_narrative(narrative, narrative_dir)
+    return narrative
 
 
 def test_first_filing_cannot_claim_new_language(tmp_path):
@@ -111,25 +122,20 @@ def test_first_filing_cannot_claim_new_language(tmp_path):
 
 
 def test_repeat_filing_marks_unchanged_language_routine(tmp_path):
-    first = process_filing(event(), facts, html, data_provenance_note="SYNTHETIC",
-                           narrative_dir=tmp_path)
-    save_narrative(first.narrative, tmp_path)
+    _seed_prior(tmp_path, html(None))
 
-    # Same document filed again as a later period: the language is identical,
-    # so nothing about it is notable any more.
-    second = process_filing(_later_event(), _no_facts, html, data_provenance_note="SYNTHETIC",
+    # The prior 10-Q said the same thing, so nothing here is notable any more.
+    result = process_filing(event(), facts, html, data_provenance_note="SYNTHETIC",
                             narrative_dir=tmp_path)
-    language = [f for f in second.memo.flags if f.rule_id.endswith("_LANGUAGE")]
+    language = [f for f in result.memo.flags if f.rule_id.endswith("_LANGUAGE")]
     assert language
     assert all(f.rule_id.startswith("UNCHANGED_") for f in language)
     assert all(f.severity == "routine" for f in language)
-    assert second.prior_narrative_accession == ACCESSION
+    assert result.prior_narrative_accession == PRIOR_ACCESSION
 
 
 def test_language_appended_to_an_existing_section_is_revised_and_cites_the_edit(tmp_path):
-    first = process_filing(event(), facts, html, data_provenance_note="SYNTHETIC",
-                           narrative_dir=tmp_path)
-    save_narrative(first.narrative, tmp_path)
+    _seed_prior(tmp_path, html(None))
 
     def amended_html(filing):
         # Appended inside the existing risk-factors prose, so it lands in the
@@ -140,7 +146,7 @@ def test_language_appended_to_an_existing_section_is_revised_and_cites_the_edit(
             "concerning its export control compliance program.</p></body>",
         )
 
-    second = process_filing(_later_event(), _no_facts, amended_html, data_provenance_note="SYNTHETIC",
+    second = process_filing(event(), facts, amended_html, data_provenance_note="SYNTHETIC",
                             narrative_dir=tmp_path)
     revised = [f for f in second.memo.flags if f.rule_id.startswith("REVISED_")]
     assert revised
@@ -149,9 +155,7 @@ def test_language_appended_to_an_existing_section_is_revised_and_cites_the_edit(
 
 
 def test_language_under_a_new_heading_is_flagged_new(tmp_path):
-    first = process_filing(event(), facts, html, data_provenance_note="SYNTHETIC",
-                           narrative_dir=tmp_path)
-    save_narrative(first.narrative, tmp_path)
+    _seed_prior(tmp_path, html(None))
 
     def amended_html(filing):
         return html(filing).replace(
@@ -161,7 +165,7 @@ def test_language_under_a_new_heading_is_flagged_new(tmp_path):
             "unspecified damages relating to our distribution agreements.</p></body>",
         )
 
-    second = process_filing(_later_event(), _no_facts, amended_html, data_provenance_note="SYNTHETIC",
+    second = process_filing(event(), facts, amended_html, data_provenance_note="SYNTHETIC",
                             narrative_dir=tmp_path)
     new_flags = [f for f in second.memo.flags if f.rule_id.startswith("NEW_")]
     assert new_flags

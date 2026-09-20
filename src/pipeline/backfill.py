@@ -10,9 +10,9 @@ That state persists until each company has filed twice under a running system
 - roughly a quarter for a 10-Q watchlist. The feature is inert exactly when a
 new user is deciding whether it works.
 
-Backfill closes that gap: fetch each company's most recent past filing, screen
-it, and store the baseline, so the next real filing is compared rather than
-merely listed.
+Backfill closes that gap: fetch each company's most recent past filings,
+screen them, and store the baselines, so the next real filing is compared
+rather than merely listed.
 
 What it deliberately does NOT do:
 
@@ -28,9 +28,9 @@ What it deliberately does NOT do:
 
 `filings.recent` is sufficient here despite the pagination gap noted in
 edgar_client: it covers roughly the last thousand filings, which for any of
-these companies reaches back years. Only the single nearest prior filing is
-ever consulted by a comparison, so depth 1 is enough; greater depth exists for
-reprocessing history, not for correctness.
+these companies reaches back years. A comparison never looks past the
+nearest prior filing, so depth beyond two is for reprocessing history rather
+than correctness - see DEFAULT_DEPTH for why two rather than one.
 """
 from __future__ import annotations
 
@@ -47,6 +47,13 @@ from src.retrieval.html_ingest import parse_filing_html
 from src.trigger.edgar_client import FilingEvent, parse_recent_filings
 
 PERIODIC_FORMS = {"10-K", "10-Q"}
+
+# Two, not one. Seeding only the latest filing covers the normal case - the
+# NEXT filing to arrive gets a predecessor - but leaves the seeded filing
+# itself without one, so polling a window that reaches back over it produces
+# no comparisons at all. A comparison never looks past the nearest prior
+# filing, so two is enough, and the extra cost is one HTML fetch per company.
+DEFAULT_DEPTH = 2
 
 
 @dataclass
@@ -87,7 +94,7 @@ def backfill_narrative_baselines(
     *,
     narrative_dir: Path | str,
     before: date | None = None,
-    depth: int = 1,
+    depth: int = DEFAULT_DEPTH,
     force: bool = False,
 ) -> BackfillResult:
     """

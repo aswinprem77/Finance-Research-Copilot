@@ -9,7 +9,11 @@ import time
 from dotenv import load_dotenv
 
 from src.ingestion.xbrl_client import SecXbrlClient
-from src.pipeline.backfill import backfill_narrative_baselines, companies_without_baselines
+from src.pipeline.backfill import (
+    DEFAULT_DEPTH,
+    backfill_narrative_baselines,
+    companies_without_baselines,
+)
 from src.pipeline.runner import run_poll_cycle
 from src.pipeline.watchlist import Watchlist, WatchlistCompany, load_watchlist
 from src.retrieval.providers import PROFILES, build_retrieval_stack
@@ -40,9 +44,10 @@ def main():
     parser.add_argument("--narrative-dir", type=Path,
                         help="Where prior-filing narrative baselines are kept. Language flags can "
                              "only establish change against filings stored here.")
-    parser.add_argument("--backfill-depth", type=int, default=1,
-                        help="Filings to seed per company. Only the nearest prior filing is ever "
-                             "used by a comparison, so 1 is enough; more is for reprocessing history.")
+    parser.add_argument("--backfill-depth", type=int, default=DEFAULT_DEPTH,
+                        help="Filings to seed per company. Two covers both the next filing to "
+                             "arrive and the most recent one already published; more is for "
+                             "reprocessing history.")
     parser.add_argument("--no-notify", action="store_true",
                         help="Process filings without sending alerts.")
     parser.add_argument("--force", action="store_true",

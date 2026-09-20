@@ -61,6 +61,12 @@ def facts(cik):
     return json.loads((FIXTURES / "sample_companyfacts.json").read_text())
 
 
+def event():
+    """The NEW 10-Q, whose period the companyfacts fixture resolves."""
+    return FilingEvent(CIK, "SYNTHETIC TEST CO", NEW, "10-Q",
+                       date(2024, 7, 20), date(2024, 6, 30), "test.htm")
+
+
 # --- selecting what to seed --------------------------------------------------
 
 def test_newest_periodic_filings_first():
@@ -88,11 +94,19 @@ def test_before_excludes_filings_from_that_day_onward():
 
 # --- seeding -----------------------------------------------------------------
 
-def test_seeds_the_most_recent_filing_by_default(tmp_path):
+def test_seeds_two_filings_by_default(tmp_path):
+    # Two, so the most recent published filing also has a predecessor - see
+    # DEFAULT_DEPTH. Oldest first.
     result = backfill_narrative_baselines(WATCHLIST, submissions, html, narrative_dir=tmp_path)
-    assert result.seeded == {CIK: [NEW]}
+    assert result.seeded == {CIK: [OLD, NEW]}
     assert result.errors == {}
-    assert stored_accessions(tmp_path, CIK) == {NEW}
+    assert stored_accessions(tmp_path, CIK) == {OLD, NEW}
+
+
+def test_depth_one_seeds_only_the_latest(tmp_path):
+    result = backfill_narrative_baselines(WATCHLIST, submissions, html,
+                                          narrative_dir=tmp_path, depth=1)
+    assert result.seeded == {CIK: [NEW]}
 
 
 def test_depth_seeds_oldest_first(tmp_path):
@@ -126,7 +140,7 @@ def test_force_reseeds(tmp_path):
     backfill_narrative_baselines(WATCHLIST, submissions, html, narrative_dir=tmp_path)
     result = backfill_narrative_baselines(WATCHLIST, submissions, html,
                                           narrative_dir=tmp_path, force=True)
-    assert result.seeded == {CIK: [NEW]}
+    assert result.seeded == {CIK: [OLD, NEW]}
 
 
 def test_a_company_with_no_periodic_filings_is_reported(tmp_path):
@@ -195,28 +209,25 @@ def test_seeding_does_not_mark_anything_completed(tmp_path):
 def test_backfill_makes_the_next_filing_comparable(tmp_path):
     narrative_dir = tmp_path / "narrative"
 
-    def later_event():
-        return FilingEvent(CIK, "SYNTHETIC TEST CO", "0000320193-24-000031", "8-K",
-                           date(2024, 10, 20), date(2024, 9, 30), "test.htm")
-
-    def no_facts(cik):
-        raise AssertionError("8-K should not fetch periodic facts")
-
     # Without a baseline, every screened passage is unestablished.
-    cold = process_filing(later_event(), no_facts, html, data_provenance_note="SYNTHETIC",
+    cold = process_filing(event(), facts, html, data_provenance_note="SYNTHETIC",
                           narrative_dir=narrative_dir)
     assert all(f.rule_id.startswith("UNESTABLISHED_")
                for f in cold.memo.flags if f.rule_id.endswith("_LANGUAGE"))
     assert cold.prior_narrative_accession is None
 
-    backfill_narrative_baselines(WATCHLIST, submissions, html, narrative_dir=narrative_dir)
+    # Seed from the filings that preceded it - the same 10-Q form class.
+    seeded = backfill_narrative_baselines(WATCHLIST, submissions, html,
+                                          narrative_dir=narrative_dir,
+                                          before=date(2024, 7, 20))
+    assert seeded.seeded == {CIK: [OLD]}
 
-    warm = process_filing(later_event(), no_facts, html, data_provenance_note="SYNTHETIC",
+    warm = process_filing(event(), facts, html, data_provenance_note="SYNTHETIC",
                           narrative_dir=narrative_dir)
     language = [f for f in warm.memo.flags if f.rule_id.endswith("_LANGUAGE")]
     assert language
     assert not any(f.rule_id.startswith("UNESTABLISHED_") for f in language)
-    assert warm.prior_narrative_accession == NEW
+    assert warm.prior_narrative_accession == OLD
 
 
 def test_missing_baselines_are_reportable(tmp_path):
