@@ -14,8 +14,10 @@ cannot change what a memo said.
 
 Scope limits worth stating, because an API implies more than this one does:
 
-- No authentication. It binds to localhost by default and is intended to run
-  behind something that does authenticate. Do not expose it as-is.
+- Authentication is a shared API key, not a user system: no accounts, roles
+  or per-user audit. See auth.py. It provides no transport security either,
+  so terminate TLS in front of it.
+- No rate limiting. A valid key can read as fast as it likes.
 - No pagination beyond a `limit`. The watchlist produces a few filings a
   quarter; this is not a dataset that needs cursors yet.
 - Reads are not transactional. A record being rewritten during a listing is
@@ -31,6 +33,7 @@ from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.responses import PlainTextResponse
 
 from src.pipeline.watchlist import load_watchlist
+from src.service.auth import ApiKeyMiddleware, load_api_keys
 from src.service.pdf import memo_pdf_bytes
 from src.service.records import RunRecord, list_run_records, load_run_record
 
@@ -41,11 +44,17 @@ def _data_dir() -> Path:
     return Path(os.getenv("COPILOT_DATA_DIR", str(DEFAULT_DATA_DIR)))
 
 
-def create_app(data_dir: Path | str | None = None) -> FastAPI:
+def create_app(data_dir: Path | str | None = None,
+               api_keys: set[str] | None = None) -> FastAPI:
     """
-    `data_dir` is injected rather than read from the environment at import
-    time so tests can point at a temporary directory without mutating global
-    state, the same reason the watchlist loader takes a path.
+    `data_dir` and `api_keys` are injected rather than read from the
+    environment at import time so tests can point at a temporary directory
+    and a known key without mutating global state, the same reason the
+    watchlist loader takes a path.
+
+    With no keys configured the API is open. That is safe only because the
+    serve CLI refuses to bind anywhere but loopback in that state - see
+    auth.py for why the default sits there rather than here.
     """
     base = Path(data_dir) if data_dir is not None else _data_dir()
     records_dir = base / "records"
@@ -56,6 +65,8 @@ def create_app(data_dir: Path | str | None = None) -> FastAPI:
         description="Read API over processed SEC filing memos. Decision support, not investment advice.",
         version="1.0.0",
     )
+    app.add_middleware(ApiKeyMiddleware,
+                       keys=load_api_keys() if api_keys is None else api_keys)
 
     def _record_or_404(accession: str) -> RunRecord:
         try:
@@ -67,6 +78,11 @@ def create_app(data_dir: Path | str | None = None) -> FastAPI:
         if record is None:
             raise HTTPException(status_code=404, detail=f"No processed filing {accession}")
         return record
+
+    @app.get("/livez", tags=["service"])
+    def livez() -> dict:
+        """Liveness only, reachable without a key: no paths, counts or filing data."""
+        return {"status": "ok"}
 
     @app.get("/health", tags=["service"])
     def health() -> dict:

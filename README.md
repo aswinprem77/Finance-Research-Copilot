@@ -151,7 +151,7 @@ Each memo names the stack that produced its narrative evidence. Every review que
 
 ## Validation and limits
 
-The September 2026 audit passes 305 offline tests and ran a live NVIDIA 10-Q through memo generation. A seven-company real review draft now contains 35 retrieval queries and 29 unique numeric checks. Draft aggregate XBRL coverage is 82.9%; the figures and relevance labels still require manual verification, so this is not yet a certified benchmark.
+The September 2026 audit passes 324 offline tests and ran a live NVIDIA 10-Q through memo generation. A seven-company real review draft now contains 35 retrieval queries and 29 unique numeric checks. Draft aggregate XBRL coverage is 82.9%; the figures and relevance labels still require manual verification, so this is not yet a certified benchmark.
 
 A labeled evaluation benchmark, a browser UI, PostgreSQL/Redis, and Azure deployment remain open. Fiscal mapping supports regular quarterly/annual calendars; transition fiscal years need review. HTML fallback supports flat, explicitly dated English/ISO headers and table-local scale labels; complex spans remain gaps.
 
@@ -205,7 +205,9 @@ Each processed filing now also writes a structured run record beside its memo, u
 
 Open `http://127.0.0.1:8000/docs`. Endpoints: `/health`, `/watchlist`, `/filings` (filter by `cik`, `form`, `notable_only`), `/filings/{accession}`, `/filings/{accession}/flags`, `/filings/{accession}/peers`, `/filings/{accession}/memo.md`, `/filings/{accession}/memo.pdf`.
 
-The API is read-only and has **no authentication**; it binds to localhost and is meant to sit behind something that does authenticate. `POST /poll` deliberately returns 501: a poll writes completion state, narrative baselines and run records, exactly one process may own those, and an API worker cannot guarantee it is that one. Polling stays with the CLI until there is a durable queue behind it.
+The API is read-only. Authentication is a shared API key in `COPILOT_API_KEYS`, sent as an `X-API-Key` header or an `Authorization: Bearer` token. With no key set the API is open **but can only bind to localhost** - `--host` anything else is refused at startup, so nothing is exposed without that being a decision someone made. Every route is covered including `/docs` and `/openapi.json`; only `/livez` is reachable without a key, so container probes do not need the credential. Keys are compared in constant time and several may be configured at once for rotation.
+
+It is a shared secret, not a user system: no accounts, roles, per-user audit or rate limiting, and no transport security of its own, so terminate TLS in front of it. `POST /poll` deliberately returns 501: a poll writes completion state, narrative baselines and run records, exactly one process may own those, and an API worker cannot guarantee it is that one. Polling stays with the CLI until there is a durable queue behind it.
 
 PDF export renders from the structured record rather than converting the Markdown, so the scope disclaimer and per-figure provenance markers cannot be lost to a Markdown parser. `reportlab` is pure Python; WeasyPrint would need cairo/pango that the slim image does not carry.
 
@@ -232,5 +234,5 @@ The Dockerfile runs as a non-root user and excludes local secrets. The image bui
 - `src/judgment/narrative.py`, `narrative_store.py`: prior-filing language comparison and its durable baselines
 - `src/output/memo.py`: memo tables, citations and review notes
 - `src/evaluation/review_app.py`: local human-labeling interface and guarded benchmark compilation
-- `src/service/`: structured run records, the read API, PDF rendering and alert delivery
+- `src/service/`: structured run records, the read API with API-key auth, PDF rendering and alert delivery
 - `tests/`: offline unit and integration tests
