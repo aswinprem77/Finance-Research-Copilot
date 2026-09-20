@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 import os
 import re
@@ -25,6 +25,7 @@ from src.retrieval.chunking import chunk_blocks
 from src.retrieval.html_ingest import parse_filing_html
 from src.retrieval.hybrid_index import HybridIndex
 from src.retrieval.providers import RetrievalStack, build_retrieval_stack
+from src.service.notify import NullNotifier, Notifier, deliver
 from src.service.records import build_run_record, save_run_record
 from src.schema.financial_schema import CompanyFinancials, FinancialConcept, FiscalPeriod
 from src.trigger.edgar_client import FilingEvent, parse_recent_filings
@@ -50,6 +51,8 @@ class FilingResult:
 class PollResult:
     completed: list[Path] = field(default_factory=list)
     errors: dict[str, str] = field(default_factory=dict)
+    # Separate from errors: the filing succeeded, only the alert did not.
+    delivery_failures: dict[str, str] = field(default_factory=dict)
 
 
 def _narrative_note(narrative: FilingNarrative | None, prior: FilingNarrative | None) -> str:
@@ -249,7 +252,8 @@ def run_poll_cycle(watchlist: Watchlist, fetch_submissions: Callable, fetch_comp
                    retrieval: RetrievalStack | None = None,
                    narrative_dir: Path | str | None = None,
                    peer_comparisons: bool = True,
-                   records_dir: Path | str | None = None) -> PollResult:
+                   records_dir: Path | str | None = None,
+                   notifier: Notifier | None = None) -> PollResult:
     """Acknowledge only after durable output. One failing company/filing cannot stop others.
 
     One process must own a state file. Filesystem replacement protects against
@@ -268,6 +272,7 @@ def run_poll_cycle(watchlist: Watchlist, fetch_submissions: Callable, fetch_comp
         return peer_cache[cik]
 
     peers = watchlist.companies if peer_comparisons else None
+    notifier = notifier or NullNotifier()
     seen = load_seen_accessions(state_path)
     result = PollResult()
     for company in watchlist.companies:
@@ -290,7 +295,21 @@ def run_poll_cycle(watchlist: Watchlist, fetch_submissions: Callable, fetch_comp
                 if narrative_dir is not None and filing.narrative is not None:
                     save_narrative(filing.narrative, narrative_dir)
                 if records_dir is not None:
-                    save_run_record(build_run_record(filing, memo_filename=path.name), records_dir)
+                    record = build_run_record(filing, memo_filename=path.name,
+                                              company_ticker=company.ticker)
+                    # Written before delivery is attempted, so a crash mid-send
+                    # leaves a record marked pending that --notify-pending can
+                    # retry without reprocessing the filing.
+                    save_run_record(record, records_dir)
+                    status, error = deliver(record, notifier)
+                    record.delivery_status, record.delivery_error = status, error
+                    if status == "sent":
+                        record.delivered_at = datetime.now(timezone.utc).isoformat()
+                    save_run_record(record, records_dir)
+                    if status == "failed":
+                        # Surfaced, but never fatal: the memo is the deliverable
+                        # and the accession is still acknowledged below.
+                        result.delivery_failures[event.accession_number] = error
                 updated = seen | {event.accession_number}
                 save_seen_accessions(updated, state_path)
                 seen = updated

@@ -102,6 +102,11 @@ class RunRecord:
     flags: list[dict] = field(default_factory=list)
     peer_comparison: dict | None = None
     prior_narrative_accession: str | None = None
+    # Delivery is best effort and recorded here rather than retried by
+    # reprocessing: "pending" until attempted, then sent, skipped or failed.
+    delivery_status: str = "pending"
+    delivery_error: str | None = None
+    delivered_at: str | None = None
 
     @property
     def notable_flag_count(self) -> int:
@@ -126,6 +131,7 @@ class RunRecord:
             "missing_concepts": list(self.missing_concepts),
             "notable_flags": self.notable_flag_count,
             "routine_flags": self.routine_flag_count,
+            "delivery_status": self.delivery_status,
             "has_peer_comparison": self.peer_comparison is not None,
         }
 
@@ -142,6 +148,9 @@ class RunRecord:
             "flags": list(self.flags),
             "peer_comparison": self.peer_comparison,
             "prior_narrative_accession": self.prior_narrative_accession,
+            "delivery_status": self.delivery_status,
+            "delivery_error": self.delivery_error,
+            "delivered_at": self.delivered_at,
         })
         return payload
 
@@ -171,18 +180,28 @@ class RunRecord:
             flags=list(value.get("flags", [])),
             peer_comparison=value.get("peer_comparison"),
             prior_narrative_accession=value.get("prior_narrative_accession"),
+            delivery_status=str(value.get("delivery_status", "pending")),
+            delivery_error=value.get("delivery_error"),
+            delivered_at=value.get("delivered_at"),
         )
 
 
-def build_run_record(result, *, memo_filename: str, processed_at: str | None = None) -> RunRecord:
-    """Flatten a FilingResult into its stored form."""
+def build_run_record(result, *, memo_filename: str, processed_at: str | None = None,
+                     company_ticker: str | None = None) -> RunRecord:
+    """
+    Flatten a FilingResult into its stored form.
+
+    The ticker comes from the watchlist rather than the filing: SEC filing
+    events carry no ticker, and an alert headed "NVDA" is easier to scan in
+    a channel than one headed "NVIDIA Corporation".
+    """
     memo: Memo = result.memo
     event = result.event
     return RunRecord(
         accession_number=event.accession_number,
         company_cik=event.company_cik,
         company_name=memo.company_name or event.company_name,
-        company_ticker=getattr(event, "company_ticker", None),
+        company_ticker=company_ticker or getattr(event, "company_ticker", None),
         form=event.form,
         filing_date=event.filing_date,
         report_date=event.report_date,

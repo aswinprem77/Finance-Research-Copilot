@@ -13,6 +13,7 @@ from src.pipeline.backfill import backfill_narrative_baselines, companies_withou
 from src.pipeline.runner import run_poll_cycle
 from src.pipeline.watchlist import Watchlist, WatchlistCompany, load_watchlist
 from src.retrieval.providers import PROFILES, build_retrieval_stack
+from src.service.notify import NullNotifier, build_notifier_from_env, deliver_pending
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -23,6 +24,9 @@ def main():
     mode.add_argument("--demo", action="store_true", help="Offline synthetic end-to-end run")
     mode.add_argument("--once", action="store_true", help="One live poll (default)")
     mode.add_argument("--interval", type=float, help="Repeat live polls every N seconds (minimum 60)")
+    mode.add_argument("--notify-pending", action="store_true",
+                      help="Retry delivery for stored records that were never sent. Reads records "
+                           "only: no SEC calls and no reprocessing.")
     mode.add_argument("--backfill", action="store_true",
                       help="Seed narrative baselines from each company's most recent past filing, so "
                            "the next real filing is compared instead of reported as unestablished. "
@@ -39,6 +43,8 @@ def main():
     parser.add_argument("--backfill-depth", type=int, default=1,
                         help="Filings to seed per company. Only the nearest prior filing is ever "
                              "used by a comparison, so 1 is enough; more is for reprocessing history.")
+    parser.add_argument("--no-notify", action="store_true",
+                        help="Process filings without sending alerts.")
     parser.add_argument("--force", action="store_true",
                         help="With --backfill, re-seed companies that already have baselines.")
     parser.add_argument("--retrieval-profile", choices=PROFILES,
@@ -49,6 +55,18 @@ def main():
         parser.error("--interval must be at least 60 seconds")
     if args.backfill_depth < 1:
         parser.error("--backfill-depth must be at least 1")
+
+    if args.notify_pending:
+        load_dotenv(ROOT / ".env")
+        records_dir = args.records_dir or ROOT / "data/live/records"
+        notifier = build_notifier_from_env()
+        if isinstance(notifier, NullNotifier):
+            parser.error("No notifier configured. Set SLACK_WEBHOOK_URL, or SMTP_HOST with "
+                         "NOTIFY_EMAIL_FROM and NOTIFY_EMAIL_TO, in .env.")
+        outcome = deliver_pending(records_dir, notifier)
+        print(json.dumps({"records_dir": str(records_dir), "notifier": notifier.name,
+                          **outcome}, indent=2))
+        return 1 if outcome["failed"] else 0
 
     if args.backfill:
         load_dotenv(ROOT / ".env")
@@ -98,6 +116,12 @@ def main():
     except ValueError as exc:
         parser.error(str(exc))
 
+    notifier = NullNotifier() if args.no_notify else build_notifier_from_env()
+    if isinstance(notifier, NullNotifier):
+        print("Alerts: disabled. Memos are written but nothing is sent.")
+    else:
+        print(f"Alerts: {notifier.name}, for filings with at least one notable finding.")
+
     narrative_dir = args.narrative_dir or directory / "narrative"
     # Say this up front rather than letting the user find every language flag
     # reported as "unestablished" in the memos and wonder why.
@@ -111,8 +135,9 @@ def main():
                 state_path=args.state_path or directory / "completed.json",
                 output_dir=args.output_dir or directory / "memos", data_provenance_note=note, since=since,
                 retrieval=retrieval, narrative_dir=narrative_dir,
-                records_dir=args.records_dir or directory / "records")
-            print(json.dumps({"completed": [str(p) for p in result.completed], "errors": result.errors}, indent=2))
+                records_dir=args.records_dir or directory / "records", notifier=notifier)
+            print(json.dumps({"completed": [str(p) for p in result.completed], "errors": result.errors,
+                              "delivery_failures": result.delivery_failures}, indent=2))
             if args.interval is None:
                 return 1 if result.errors else 0
             time.sleep(args.interval)

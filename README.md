@@ -107,7 +107,7 @@ Each memo names the stack that produced its narrative evidence. Every review que
 
 ## Validation and limits
 
-The September 2026 audit passes 271 offline tests and ran a live NVIDIA 10-Q through memo generation. A seven-company real review draft now contains 35 retrieval queries and 29 unique numeric checks. Draft aggregate XBRL coverage is 82.9%; the figures and relevance labels still require manual verification, so this is not yet a certified benchmark.
+The September 2026 audit passes 301 offline tests and ran a live NVIDIA 10-Q through memo generation. A seven-company real review draft now contains 35 retrieval queries and 29 unique numeric checks. Draft aggregate XBRL coverage is 82.9%; the figures and relevance labels still require manual verification, so this is not yet a certified benchmark.
 
 A labeled evaluation benchmark, a browser UI, PostgreSQL/Redis, and Azure deployment remain open. Fiscal mapping supports regular quarterly/annual calendars; transition fiscal years need review. HTML fallback supports flat, explicitly dated English/ISO headers and table-local scale labels; complex spans remain gaps.
 
@@ -136,6 +136,20 @@ Review the prepared queue in the local interface:
 ```
 
 Open `http://127.0.0.1:8765`. The interface shows filing-level progress, opens the original SEC filing, saves each numeric verification and passage label directly to the review CSVs, and enables compilation only after every label is complete and each query has relevant evidence. Stop the server with Ctrl+C.
+
+## Alerts
+
+Section 2's use case is "alert me when something material changes", and until now the pipeline wrote a memo to a folder and told nobody. Configure `SLACK_WEBHOOK_URL`, or `SMTP_HOST` with `NOTIFY_EMAIL_FROM` and `NOTIFY_EMAIL_TO`, in `.env`. With neither set the pipeline polls normally and sends nothing, reporting that at startup.
+
+Only filings with at least one **notable** finding are delivered. Routine items are counted in the message but never trigger one: a notifier that fires on unchanged boilerplate teaches its reader to ignore it. Each alert names the company, form, coverage, the top findings with their rule IDs, and links the filing on EDGAR.
+
+Delivery is best effort and never fails a filing. A Slack outage must not cost a memo, and must not block the acknowledgement either, or one failed POST would trigger a full reprocess to retry it. The outcome is stored on the run record instead, and retried from records alone:
+
+```powershell
+.\venv\Scripts\python.exe -m src.pipeline --notify-pending
+```
+
+That reads records only: no SEC calls, no re-analysis. Records already sent are never re-sent. Use `--no-notify` to process without alerting.
 
 ## Read API and PDF export
 
@@ -174,5 +188,5 @@ The Dockerfile runs as a non-root user and excludes local secrets. The image bui
 - `src/judgment/narrative.py`, `narrative_store.py`: prior-filing language comparison and its durable baselines
 - `src/output/memo.py`: memo tables, citations and review notes
 - `src/evaluation/review_app.py`: local human-labeling interface and guarded benchmark compilation
-- `src/service/`: structured run records, the read API and PDF rendering
+- `src/service/`: structured run records, the read API, PDF rendering and alert delivery
 - `tests/`: offline unit and integration tests
